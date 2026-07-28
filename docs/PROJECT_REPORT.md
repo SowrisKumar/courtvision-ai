@@ -343,3 +343,108 @@ against a real ingested DB are completely unchanged.
 | CI database | Synthetic fixture built in-process | **Hit stats.nba.com from CI**: blocked IPs + flaky third-party dependency. **Commit a real DuckDB file**: binary blobs in git, stale data, licensing gray area. **Skip DB tests in CI**: lint-only CI catches almost nothing. |
 | Ingest fix | Per-season delete+insert upsert | **Document the destructive behavior instead**: docs don't prevent data loss, they just explain it afterwards. **Full merge/dedup logic**: seasons are the natural refresh unit; finer granularity adds complexity with no use case. |
 | B008 lint finding | Adopt `Annotated` dependencies | **Suppress the rule**: `Annotated` is FastAPI's current recommended style anyway — the lint was right. |
+
+---
+
+## Milestone 3 — Machine Learning Layer
+
+*Completed: July 28, 2026*
+
+### Non-technical summary
+
+Two ML features shipped, both live behind API endpoints:
+
+1. **Player similarity engine** — "who plays like this player?" Each player-season is
+   summarized as a 15-number statistical fingerprint (scoring volume, efficiency,
+   usage, playmaking, rebounding, shot diet); the engine ranks everyone by how closely
+   their fingerprint's *shape* matches. The results pass the basketball eye test:
+   Jokić's closest 2025-26 matches are Jalen Johnson, LeBron, Giddey, and Sengun —
+   all jumbo playmakers; Luka's are Donovan Mitchell and James Harden — high-usage
+   shot-creating guards.
+
+2. **Win probability model** — given any two teams, estimates the home team's chance
+   of winning from *current form* (recent record, scoring margin, season record,
+   rest). Honest evaluation on a season the model never saw (2025-26): **67.6%
+   accuracy vs a 55.1% "always pick home team" baseline, AUC 0.738**. Professional
+   betting lines land around 68–70%, so a pure team-form model at 67.6% is credible —
+   and the gap to Vegas is roughly what player-availability information is worth.
+
+**Deferred: salary value analysis.** There is no clean, legally re-distributable
+public source for NBA salary data (Spotrac/HoopsHype are scrape-hostile; the CBA data
+isn't published as an API). Rather than build on a shaky source, this feature waits
+for a sourcing decision.
+
+### What was done (technical)
+
+1. **`src/courtvision/ml/features.py`** — feature-engineering SQL:
+   - `TEAM_FORM_SQL`: per team-game rolling windows over `v_team_game` — last-10 win%
+     and average margin, season-to-date win%, rest days. **Every window ends at
+     `1 PRECEDING`**, so a game's features never include its own outcome (no leakage).
+   - `GAME_DATASET_SQL`: self-join of home and away form rows per `GAME_ID`; drops
+     games where either side has played < 6 games (unstable early-season form);
+     rest days capped at 7 (an 8-day All-Star break tells you nothing more than a week off).
+2. **`ml/similarity.py`** — pulls qualified players (≥20 GP, ≥15 min/game) for a
+   season, z-scores the 15-feature matrix, ranks by cosine similarity to the target.
+   Pure NumPy (~600×15 matrix; milliseconds), no model artifact needed.
+3. **`ml/win_probability.py`** — trains two candidates (standardized logistic
+   regression; histogram gradient boosting), evaluates both on the held-out test
+   season, saves the better one (by log loss) with a JSON metadata sidecar
+   (`data/models/win_probability.{joblib,json}`). Logistic won: log loss 0.601 vs
+   0.628, AUC 0.738 vs 0.710 — with 8 features and ~2,300 training games, the extra
+   capacity of boosting only finds noise.
+4. **API endpoints** — `GET /players/{id}/similar` (season defaults to the player's
+   latest) and `GET /predict/game?home_team_id=&away_team_id=` (503 with instructions
+   if the model isn't trained; predicts from each team's latest-season form).
+5. **`scripts/train_win_model.py`** — CLI training entry point; prints the metrics JSON.
+6. **6 new tests** (`tests/test_ml.py`), all running on both real and synthetic data:
+   similarity structure (ordering, self-exclusion, score bounds), dataset integrity
+   (no NaNs, one row per game), model-beats-chance gate (AUC > 0.55), endpoint
+   behavior incl. 404s. 18 tests total.
+
+### How it works
+
+```
+v_team_game ──window SQL──▶ rolling form features ──self-join──▶ game dataset
+                                                       │
+                              train/test split by season (no shuffling!)
+                                                       │
+                    logistic regression vs hist gradient boosting
+                                                       │
+                        best by log loss ──▶ data/models/*.joblib
+                                                       │
+GET /predict/game ──▶ current_form(team) ──▶ model.predict_proba ──▶ P(home win)
+
+v_player_season ──▶ z-scored 15-feature matrix ──▶ cosine vs target ──▶ top-k
+```
+
+### Model evaluation detail (2025-26 held out)
+
+| Model | Log loss | AUC | Accuracy |
+|---|---|---|---|
+| Always pick home team | — | 0.500 | 0.551 |
+| Hist gradient boosting | 0.628 | 0.710 | 0.656 |
+| **Logistic regression** | **0.601** | **0.738** | **0.676** |
+
+The split is **by season, never shuffled** — shuffling game rows across time would
+leak future form into training and inflate every metric.
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `/predict/game` returns 503 | Model not trained | `python scripts/train_win_model.py` |
+| `/players/{id}/similar` returns 404 for a real player | Player below qualification floor | Needs ≥20 games and ≥15 min/game that season (floor set in `ml/similarity.py`). |
+| `ConnectionException` about read-only/write configs in tests | A write connection held open while the API opens read-only ones (same process) | Order fixtures: write work (views, training) fully closed *before* `TestClient` starts — see the comment in `tests/test_ml.py`. |
+| Metrics look too good after changing the dataset SQL | Leakage | Check every window still ends at `1 PRECEDING` and the split is by season. |
+| Retraining gives slightly different boosting numbers | Nondeterminism | `random_state=0` is set; if numbers still drift, check sklearn version. |
+
+### Alternatives considered
+
+| Decision | Chosen | Alternatives & why rejected |
+|---|---|---|
+| Similarity metric | Cosine on z-scores | **Euclidean/KNN**: dominated by volume stats — every star matches every star. Cosine on standardized features matches on *style*. **PCA first**: adds an unexplainable step; 15 curated features don't need reduction. |
+| Similarity serving | Compute per request | **Precomputed FAISS/ChromaDB index**: the spec names them, but they solve million-vector problems; ~600 players is a 1 ms NumPy dot product. Vector DBs enter with the RAG milestone, where they belong. |
+| Win-prob algorithms | Logistic + HistGB, keep better | **XGBoost/LightGBM** (named in spec): heavier native deps for marginal gains at this scale; sklearn's HistGB is the same algorithm family, and it *still* lost to logistic — the honest lesson is that small tabular data favors simple models. |
+| Win-prob features | Team form only | **Player-level availability/ratings**: the single biggest upgrade (injuries move lines), but requires reliable daily injury data — a sourcing problem, deferred deliberately. |
+| Evaluation | Hold out the latest full season | **Random K-fold**: leaks time. **Rolling-origin backtest**: better still, and worth adding when the model gains features; one clean temporal split is honest and simple today. |
+| Salary model | Deferred | No legally solid public salary source; building on scraped Spotrac data would undermine the project's "production-grade" claim. |

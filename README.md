@@ -8,7 +8,7 @@ salary value), interactive dashboards, and an LLM-powered analytics assistant.
 
 ## Status
 
-**Milestone 2 complete — metrics layer + REST API.** The pipeline pulls league-wide team
+**Milestone 3 complete — ML layer (similarity + win probability).** The pipeline pulls league-wide team
 and player stats (Base + Advanced measure types) and full game logs from stats.nba.com
 via [`nba_api`](https://github.com/swar/nba_api) into a local DuckDB warehouse; SQL views
 normalize them into clean per-game analytics tables, served by a FastAPI backend.
@@ -36,6 +36,7 @@ pip install -e ".[dev]"
 python scripts/ingest.py            # ingest default seasons into data/courtvision.duckdb
 python scripts/ingest.py 2022-23    # add/refresh specific season(s); others are preserved
 python scripts/build_metrics.py     # (re)create the analytics views
+python scripts/train_win_model.py   # train the win probability model
 pytest                              # test the warehouse + API (uses a synthetic DB if none ingested)
 uvicorn courtvision.api.main:app --reload   # serve the API → http://127.0.0.1:8000/docs
 ```
@@ -50,6 +51,8 @@ uvicorn courtvision.api.main:app --reload   # serve the API → http://127.0.0.1
 | `GET /players/search?q=jokic` | Accent-insensitive player name search |
 | `GET /players/{player_id}` | Per-season stats: per-game, shooting efficiency, usage, ratings |
 | `GET /leaderboards/{stat}?season=&min_gp=` | Top players by any whitelisted stat (`pts_pg`, `ts_pct`, `pie`, …) |
+| `GET /players/{id}/similar?season=` | ML similarity engine: statistically closest players (z-scored profile, cosine) |
+| `GET /predict/game?home_team_id=&away_team_id=` | Pregame win probability from current team form (test AUC 0.74) |
 
 Query the warehouse with any DuckDB client:
 
@@ -69,7 +72,7 @@ datacenter IPs. All calls go through a retry/backoff wrapper with a politeness d
 
 1. ✅ Ingestion pipeline + DuckDB warehouse
 2. ✅ Computed metrics layer + FastAPI backend
-3. ML models: player similarity, win probability, salary value
+3. ✅ ML models: player similarity, win probability (salary value deferred — needs a licensed data source)
 4. React dashboards
 5. LLM layer: natural-language analytics + AI scouting reports (RAG, grounded in the warehouse)
 6. Dockerized deployment + CI/CD

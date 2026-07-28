@@ -9,6 +9,8 @@ dependencies = [
     "duckdb>=1.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    "scikit-learn>=1.5",
+    "joblib>=1.4",
 ]
 
 [project.optional-dependencies]

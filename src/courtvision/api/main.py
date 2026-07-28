@@ -12,8 +12,11 @@ import duckdb
 from fastapi import Depends, FastAPI, HTTPException, Query
 
 from courtvision.api.deps import db, rows_to_dicts
+from courtvision.config import MODELS_DIR
 from courtvision.db.connection import get_connection
 from courtvision.metrics.views import build_views
+from courtvision.ml import win_probability
+from courtvision.ml.similarity import similar_players
 
 DB = Annotated[duckdb.DuckDBPyConnection, Depends(db)]
 
@@ -113,6 +116,55 @@ def player_detail(
     if not seasons:
         raise HTTPException(404, f"player {player_id} not found in ingested seasons")
     return {"player_id": player_id, "player_name": seasons[-1]["player_name"], "seasons": seasons}
+
+
+@app.get("/players/{player_id}/similar")
+def player_similar(
+    player_id: int,
+    con: DB,
+    season: str | None = Query(None, description="defaults to the player's latest season"),
+    limit: int = Query(5, ge=1, le=20),
+) -> dict:
+    if season is None:
+        row = con.execute(
+            "SELECT max(season) FROM v_player_season WHERE player_id = ?", [player_id]
+        ).fetchone()
+        if row[0] is None:
+            raise HTTPException(404, f"player {player_id} not found in ingested seasons")
+        season = row[0]
+    similar = similar_players(con, player_id, season, limit)
+    if similar is None:
+        raise HTTPException(
+            404,
+            f"player {player_id} has no qualified {season} profile "
+            "(needs 20+ games and 15+ minutes per game)",
+        )
+    return {"player_id": player_id, "season": season, "similar": similar}
+
+
+@app.get("/predict/game")
+def predict_game(
+    con: DB,
+    home_team_id: int = Query(...),
+    away_team_id: int = Query(...),
+) -> dict:
+    loaded = win_probability.load(MODELS_DIR)
+    if loaded is None:
+        raise HTTPException(503, "win probability model not trained; run scripts/train_win_model.py")
+    model, meta = loaded
+    home = win_probability.current_form(con, home_team_id)
+    away = win_probability.current_form(con, away_team_id)
+    if home is None or away is None:
+        missing = home_team_id if home is None else away_team_id
+        raise HTTPException(404, f"team {missing} has no game logs")
+    p = win_probability.predict_matchup(model, home, away)
+    return {
+        "home": home,
+        "away": away,
+        "home_win_probability": round(p, 3),
+        "model": meta["best_model"],
+        "as_of_season": home["season"],
+    }
 
 
 # Whitelist of sortable leaderboard stats -> minimum-minutes filter applied.
