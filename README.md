@@ -1,5 +1,7 @@
 # CourtVision AI
 
+[![CI](https://github.com/SowrisKumar/courtvision-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/SowrisKumar/courtvision-ai/actions/workflows/ci.yml)
+
 An end-to-end NBA analytics & decision intelligence platform: automated data ingestion,
 an analytics warehouse, advanced metrics, ML models (player similarity, win probability,
 salary value), interactive dashboards, and an LLM-powered analytics assistant.
@@ -32,9 +34,9 @@ pip install -e ".[dev]"
 
 ```bash
 python scripts/ingest.py            # ingest default seasons into data/courtvision.duckdb
-python scripts/ingest.py 2022-23    # ingest specific season(s)
+python scripts/ingest.py 2022-23    # add/refresh specific season(s); others are preserved
 python scripts/build_metrics.py     # (re)create the analytics views
-pytest                              # test the warehouse + API
+pytest                              # test the warehouse + API (uses a synthetic DB if none ingested)
 uvicorn courtvision.api.main:app --reload   # serve the API → http://127.0.0.1:8000/docs
 ```
 

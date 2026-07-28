@@ -142,9 +142,8 @@ the target path existed, yet the path never appeared on `sys.path`.
    `com.apple.fileprovider` extended attributes — the fingerprint of iCloud's file
    provider managing the directory.
 6. `python -v` gave the smoking gun: **`Skipping hidden .pth file`**. Python 3.13
-   added a rule to ignore hidden `.pth` files ([gh-107715](https://github.com/python/cpython/issues/107715)),
-   and iCloud was (asynchronously — hence the intermittency) flagging synced files
-   hidden.
+   added a rule to ignore `.pth` files carrying the hidden attribute, and iCloud was
+   (asynchronously — hence the intermittency) flagging synced files hidden.
 
 **Fix:**
 1. Renamed the venv to `.venv.nosync` — iCloud excludes `*.nosync` paths from sync —
@@ -275,3 +274,72 @@ uvicorn courtvision.api.main:app --reload    # http://127.0.0.1:8000/docs
 | Leaderboard design | One endpoint + stat whitelist | **Endpoint per stat**: 11 near-identical handlers. **Free-form stat parameter**: SQL injection via `ORDER BY` — identifiers can't be bound parameters, so a whitelist is the only safe generic design. |
 | Connection strategy | New read-only connection per request | **Shared global connection**: DuckDB connections aren't safely shareable across threads, and FastAPI runs sync handlers in a threadpool. **Connection pool**: solves a throughput problem we don't have; revisit under load. |
 | Response models | Plain dicts from SQL rows | **Pydantic models per endpoint**: better OpenAPI schemas and type safety, but duplicates the view schemas by hand today; planned when the API surface stabilizes (and needed anyway for the LLM tool-calling layer). |
+
+---
+
+## Project Audit — full correctness review + CI
+
+*Completed: July 28, 2026*
+
+### Non-technical summary
+
+Before building the machine-learning milestone we paused and audited everything built
+so far: the plan, the framework choices, and every line of code. The architecture held
+up. The data was re-verified against reality. Five concrete problems were found and
+fixed — the most important being a hidden data-loss trap: asking the ingestion script
+to refresh *one* season would silently delete all the *other* seasons. We also added
+continuous integration: from now on, every change pushed to GitHub is automatically
+linted and tested before a human ever reviews it.
+
+### Findings (technical)
+
+**Verified correct, no action needed:**
+- Warehouse semantics: exactly one row per player per season (count == distinct across
+  all three seasons); traded players carry `TEAM_COUNT > 1` with their last team.
+- SQL injection surface: all user values bound; the one interpolated identifier
+  (leaderboard stat) is whitelist-guarded and covered by an injection test.
+- Ground-truth checks pass against real basketball facts.
+
+**Fixed:**
+
+| # | Issue | Fix |
+|---|---|---|
+| 1 | `ingest.py 2022-23` **replaced entire tables** with just that season (data loss); README implied additive behavior | New `upsert_seasons()` in `db/connection.py`: creates the table if missing, deletes only the incoming seasons' rows, inserts. Verified empirically: re-ingested 2025-26 alone, 2023-24/2024-25 row counts unchanged. |
+| 2 | Test hardcoded `len(seasons) == 3` — breaks on any 4th season | Expected seasons now derived from `/health` at test time. |
+| 3 | Dead code: unused `fetch_team_roster` | Removed. |
+| 4 | Stray empty `".venv 2"` directory (macOS artifact) | Removed. |
+| 5 | ruff declared but never run | Ran it; fixed all findings — migrated API handlers to FastAPI's modern `Annotated` dependency style (B008), added a documented `noqa` for the intentional broad catch in the network retry wrapper (BLE001). |
+
+### CI pipeline
+
+`.github/workflows/ci.yml`: on every push/PR — Python 3.12, `pip install -e ".[dev]"`,
+`ruff check`, `pytest -q`.
+
+The interesting problem: **CI has no database.** The real warehouse requires
+stats.nba.com, which is unreachable/blockable from GitHub's datacenter IPs, and a test
+suite that depends on a third-party API is flaky by construction. Solution: a
+**synthetic warehouse** (`tests/synth.py` + `tests/conftest.py`). When
+`data/courtvision.duckdb` is absent, conftest builds a fake-but-structurally-faithful
+DuckDB before any test imports the app: 30 real teams, 3 seasons, a full 82-game
+schedule per team (41 home / 41 away, 2 rows per game — real NBA constraint: 1,230
+games per season), and a player pool seeded with real star names whose crafted stats
+preserve the ground-truth assertions (Luka leads 2023-24 scoring; Jokić's TS% > .55).
+`COURTVISION_DB` env var overrides the DB path (read in `config.py`). Local runs
+against a real ingested DB are completely unchanged.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| CI red on lint | `ruff check src scripts tests` locally; `--fix` for auto-fixables. |
+| CI red on tests but green locally | You're testing real data locally, CI tests synthetic. Reproduce with: `COURTVISION_DB=/tmp/s.duckdb python -c "import sys; sys.path.insert(0,'tests'); from synth import build_synthetic_db; from pathlib import Path; build_synthetic_db(Path('/tmp/s.duckdb'))"` then `COURTVISION_DB=/tmp/s.duckdb pytest -q`. |
+| A new test needs a column the synthetic DB lacks | Add it to the relevant frame in `tests/synth.py` — synthetic tables only carry columns the views reference. |
+| Old single-season ingest wiped data (pre-audit clone) | Re-run `python scripts/ingest.py` with all seasons; upsert semantics now prevent recurrence. |
+
+### Alternatives considered
+
+| Decision | Chosen | Alternatives & why rejected |
+|---|---|---|
+| CI database | Synthetic fixture built in-process | **Hit stats.nba.com from CI**: blocked IPs + flaky third-party dependency. **Commit a real DuckDB file**: binary blobs in git, stale data, licensing gray area. **Skip DB tests in CI**: lint-only CI catches almost nothing. |
+| Ingest fix | Per-season delete+insert upsert | **Document the destructive behavior instead**: docs don't prevent data loss, they just explain it afterwards. **Full merge/dedup logic**: seasons are the natural refresh unit; finer granularity adds complexity with no use case. |
+| B008 lint finding | Adopt `Annotated` dependencies | **Suppress the rule**: `Annotated` is FastAPI's current recommended style anyway — the lint was right. |

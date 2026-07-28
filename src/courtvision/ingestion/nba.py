@@ -10,7 +10,6 @@ import time
 
 import pandas as pd
 from nba_api.stats.endpoints import (
-    commonteamroster,
     leaguedashplayerstats,
     leaguedashteamstats,
     leaguegamelog,
@@ -31,7 +30,7 @@ def _fetch(endpoint_cls, **kwargs) -> pd.DataFrame:
             df = result.get_data_frames()[0]
             time.sleep(API_SLEEP_SECONDS)
             return df
-        except Exception as exc:  # nba_api raises bare Exception subclasses on HTTP issues
+        except Exception as exc:  # noqa: BLE001 — nba_api raises bare Exception subclasses on HTTP issues
             last_error = exc
             log.warning(
                 "%s attempt %d/%d failed: %s",
@@ -74,11 +73,5 @@ def fetch_player_season_stats(season: str, measure_type: str = "Base") -> pd.Dat
 def fetch_game_log(season: str) -> pd.DataFrame:
     """One row per team per game for the season (team box scores)."""
     df = _fetch(leaguegamelog.LeagueGameLog, season=season)
-    df["SEASON"] = season
-    return df
-
-
-def fetch_team_roster(team_id: int, season: str) -> pd.DataFrame:
-    df = _fetch(commonteamroster.CommonTeamRoster, team_id=team_id, season=season)
     df["SEASON"] = season
     return df

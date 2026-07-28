@@ -30,10 +30,11 @@ def test_list_teams_season(client):
 
 
 def test_team_detail_and_splits(client):
+    all_seasons = client.get("/health").json()["seasons"]
     teams = client.get("/teams", params={"season": "2025-26"}).json()
     team_id = teams[0]["team_id"]
     body = client.get(f"/teams/{team_id}").json()
-    assert len(body["seasons"]) == 3
+    assert [s["season"] for s in body["seasons"]] == all_seasons
     splits = body["home_away_splits"]
     assert {(s["season"], s["venue"]) for s in splits} >= {("2025-26", "home"), ("2025-26", "away")}
     for s in splits:

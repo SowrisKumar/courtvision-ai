@@ -11,7 +11,7 @@ import sys
 import pandas as pd
 
 from courtvision.config import DEFAULT_SEASONS
-from courtvision.db.connection import get_connection, load_dataframe
+from courtvision.db.connection import get_connection, load_dataframe, upsert_seasons
 from courtvision.ingestion import nba
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -40,8 +40,8 @@ def main(seasons: list[str]) -> None:
         loads["game_logs"].append(nba.fetch_game_log(season))
 
     for table, frames in loads.items():
-        n = load_dataframe(con, table, pd.concat(frames, ignore_index=True))
-        log.info("%s: %d rows", table, n)
+        n = upsert_seasons(con, table, pd.concat(frames, ignore_index=True))
+        log.info("%s: %d rows total", table, n)
 
     con.close()
     log.info("done")
