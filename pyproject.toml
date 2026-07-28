@@ -1,0 +1,26 @@
+[project]
+name = "courtvision"
+version = "0.1.0"
+description = "CourtVision AI — NBA analytics & decision intelligence platform"
+requires-python = ">=3.11"
+dependencies = [
+    "nba_api>=1.11",
+    "pandas>=2.2",
+    "duckdb>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
