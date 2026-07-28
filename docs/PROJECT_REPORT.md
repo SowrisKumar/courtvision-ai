@@ -111,3 +111,167 @@ entity has two tables rather than one wide one.
 | Orchestration | Plain script | **Airflow**: heavy infrastructure (scheduler, metadata DB) for what is currently one command; **dbt**: valuable later for the metrics/transform layer, premature while there are no transforms. A cron entry or GitHub Action can schedule `ingest.py` when needed. |
 | Load strategy | Full refresh (`CREATE OR REPLACE`) | **Incremental upserts**: more code, more edge cases (late stat corrections by the NBA are common), no payoff at this volume. |
 | Package layout | `src/` layout + editable install | **Flat scripts/notebooks**: faster to start but doesn't demonstrate production engineering, and imports break as the project grows. |
+
+---
+
+## Incident report — venv broken by iCloud Desktop sync
+
+*July 28, 2026 — resolved*
+
+### Non-technical summary
+
+Midway through milestone 2, `import courtvision` suddenly stopped working — sometimes.
+The same command would succeed one minute and fail the next, which is the most confusing
+class of bug. The cause turned out to be macOS itself: this project lives on the
+Desktop, and the Mac's iCloud "Desktop & Documents" sync was interfering with the
+Python environment.
+
+### Technical detail
+
+**Symptom:** `ModuleNotFoundError: No module named 'courtvision'` — intermittently.
+The editable-install `.pth` file existed in `site-packages` with the correct contents,
+the target path existed, yet the path never appeared on `sys.path`.
+
+**Diagnosis path (useful as a template for "impossible" bugs):**
+1. Verified the `.pth` file's exact bytes (`xxd`) — clean, newline-terminated.
+2. Verified `os.path.exists()` on the target from inside Python — true.
+3. Probed whether `.pth` processing runs at all — it did, sometimes even twice.
+4. A byte-identical copy of the file under a different name worked while the original
+   didn't — then later both failed. Intermittency ⇒ environment, not code.
+5. `ls -lO@` showed every file in the venv carried the macOS **`hidden` chflag** and
+   `com.apple.fileprovider` extended attributes — the fingerprint of iCloud's file
+   provider managing the directory.
+6. `python -v` gave the smoking gun: **`Skipping hidden .pth file`**. Python 3.13
+   added a rule to ignore hidden `.pth` files ([gh-107715](https://github.com/python/cpython/issues/107715)),
+   and iCloud was (asynchronously — hence the intermittency) flagging synced files
+   hidden.
+
+**Fix:**
+1. Renamed the venv to `.venv.nosync` — iCloud excludes `*.nosync` paths from sync —
+   with a symlink `.venv → .venv.nosync` so every documented command still works.
+2. `chflags -R nohidden .venv.nosync` to clear the existing flags.
+3. Verified with repeated imports and the full test suite.
+
+### Troubleshooting (if it recurs)
+
+- `python -v -c pass 2>&1 | grep -i pth` — look for "Skipping hidden .pth file".
+- `ls -lO` in site-packages — check for the `hidden` flag; clear with `chflags -R nohidden`.
+- Long-term recommendation: keep code repositories out of iCloud-synced folders
+  (Desktop/Documents) entirely — e.g. `~/Projects/`. Sync also risks corrupting the
+  DuckDB file if it syncs mid-write, and uploads tens of thousands of venv files.
+
+### Alternatives considered
+
+| Option | Why not chosen |
+|---|---|
+| Move the whole project out of Desktop | The right long-term fix, but it's the user's file organization to decide; `.nosync` solves the immediate problem without moving anything. |
+| Abandon editable install (plain `pip install .`) | Would require reinstalling after every source edit during development. |
+| `PYTHONPATH` in shell profile | Machine-specific, invisible configuration; breaks for anyone else cloning the repo. |
+
+---
+
+## Milestone 2 — Metrics Layer & REST API
+
+*Completed: July 28, 2026*
+
+### Non-technical summary
+
+Milestone 1 stocked the warehouse; milestone 2 opens the service counter. Two things
+were built:
+
+1. **A metrics layer** — the raw downloaded tables are messy (55–80 columns each,
+   season *totals* rather than per-game numbers, dozens of "rank" columns we don't
+   need). We defined clean, analyst-friendly *views*: one row per player-season and
+   per team-season with the numbers people actually reason about — points per game,
+   true shooting %, usage rate, offensive/defensive rating, pace — plus a per-game
+   view that knows which games were home vs. away.
+
+2. **A REST API** — a web service that any program (our future dashboard, the future
+   AI assistant, or a curious developer with a browser) can query: search players by
+   name, get a team's season history with home/away splits, pull leaderboards for any
+   stat. It ships with self-documenting interactive docs at `/docs`.
+
+Everything is covered by automated tests, including basketball "ground truth" checks
+(the API must report Luka Dončić as the 2023-24 scoring champion, every team must have
+exactly 41 home and 41 away games).
+
+### What was done (technical)
+
+1. **`src/courtvision/metrics/views.py`** — three DuckDB views defined as SQL constants
+   and created idempotently (`CREATE OR REPLACE VIEW`):
+   - `v_player_season`: Base ⋈ Advanced on `(PLAYER_ID, TEAM_ID, SEASON)`; per-game
+     normalization (`PTS/GP` etc.), TS%, eFG%, USG%, ratings, PIE. `GP > 0` guard
+     against division by zero.
+   - `v_team_season`: team Base ⋈ Advanced ⋈ `teams` (for the abbreviation); record,
+     per-game scoring, ratings, pace, four-factor-adjacent metrics.
+   - `v_team_game`: game logs with `is_home` derived from the `MATCHUP` string
+     (`"vs."` = home, `"@"` = away) and an `is_win` flag.
+   `scripts/build_metrics.py` creates them from the CLI; the API also (re)creates them
+   at startup so views never go stale after re-ingestion.
+2. **FastAPI app** (`src/courtvision/api/`):
+   - `deps.py` — per-request **read-only** DuckDB connection as a dependency
+     (read-only connections coexist; the out-of-process ingest script is the only writer).
+   - `main.py` — endpoints: `/health`, `/teams`, `/teams/{id}` (with home/away splits
+     computed by SQL aggregation), `/players/search`, `/players/{id}`,
+     `/leaderboards/{stat}`. Lifespan handler builds views on startup.
+3. **Security details:** every user value is a bound SQL parameter (`?`); the
+   leaderboard stat name — which must be interpolated into `ORDER BY` and can't be a
+   bound parameter — is validated against a hard whitelist, tested with an injection
+   attempt (`/leaderboards/evil; DROP TABLE`).
+4. **Search UX detail:** name search uses `strip_accents(lower(...))` on both sides so
+   "jokic" finds "Jokić" and "doncic" finds "Dončić". (Found by a failing test —
+   the test suite caught it before any user would have.)
+5. **7 new API tests** (`tests/test_api.py`) using FastAPI's `TestClient`, gated to
+   skip when the database hasn't been ingested. 12 tests total, all passing.
+
+### Why
+
+- **Views, not materialized tables:** at this data volume DuckDB recomputes a view in
+  microseconds; views can never be stale relative to the raw tables; and view SQL
+  doubles as living documentation of every metric definition. This is the same
+  pattern dbt formalizes — if/when we adopt dbt, these views port directly.
+- **Per-request read-only connections:** DuckDB allows exactly one writer but many
+  readers. Keeping the API read-only makes it impossible for a web request to corrupt
+  the warehouse and sidesteps connection-sharing/threading questions entirely.
+- **A REST API now, before dashboards/ML:** every later milestone consumes this layer.
+  Building it early means the frontend and the LLM tool-calling layer both get a
+  stable, tested contract.
+
+### How it works
+
+```
+                    ┌── scripts/build_metrics.py (CLI)
+raw tables ──▶ SQL views (v_player_season, v_team_season, v_team_game)
+                    └── FastAPI lifespan (auto-refresh on startup)
+                              │
+                    per-request read-only DuckDB connection (deps.py)
+                              │
+                    GET /teams /players /leaderboards ... ──▶ JSON
+```
+
+Run it:
+
+```bash
+python scripts/build_metrics.py
+uvicorn courtvision.api.main:app --reload    # http://127.0.0.1:8000/docs
+```
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `Catalog Error: Table 'v_player_season' does not exist` | Views not built | Run `python scripts/build_metrics.py`, or just start the API (it builds them at startup). |
+| API returns empty lists | Wrong `season` format | Use `YYYY-YY`, e.g. `2025-26`; check `/health` for available seasons. |
+| `IO Error: ... database is locked` on API start | Ingest running concurrently (it's the writer) | Let ingestion finish; the API only needs read access. |
+| 400 on `/leaderboards/...` | Stat not in whitelist | Error message lists valid stats; add new ones to `LEADERBOARD_STATS` *and* `v_player_season`. |
+| Search finds nothing for an accented name | — | Search is accent-insensitive by design; if a name is missing, the player may not have played in the ingested seasons. |
+
+### Alternatives considered
+
+| Decision | Chosen | Alternatives & why rejected |
+|---|---|---|
+| Transform layer | DuckDB SQL views | **dbt**: the industry tool, but adds a whole toolchain for 3 views; planned once the model count grows. **Pandas transforms → new tables**: logic hidden in Python, stale after re-ingest, harder to inspect than `DESCRIBE v_player_season`. |
+| API framework | FastAPI | **Flask**: no built-in validation/OpenAPI docs. **Django REST**: ORM-centric and heavyweight — we deliberately query analytics SQL, not ORM models. FastAPI's auto `/docs` is also a portfolio asset. |
+| Leaderboard design | One endpoint + stat whitelist | **Endpoint per stat**: 11 near-identical handlers. **Free-form stat parameter**: SQL injection via `ORDER BY` — identifiers can't be bound parameters, so a whitelist is the only safe generic design. |
+| Connection strategy | New read-only connection per request | **Shared global connection**: DuckDB connections aren't safely shareable across threads, and FastAPI runs sync handlers in a threadpool. **Connection pool**: solves a throughput problem we don't have; revisit under load. |
+| Response models | Plain dicts from SQL rows | **Pydantic models per endpoint**: better OpenAPI schemas and type safety, but duplicates the view schemas by hand today; planned when the API surface stabilizes (and needed anyway for the LLM tool-calling layer). |

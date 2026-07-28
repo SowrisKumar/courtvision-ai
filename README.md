@@ -6,9 +6,10 @@ salary value), interactive dashboards, and an LLM-powered analytics assistant.
 
 ## Status
 
-**Milestone 1 — data ingestion (in progress).** The pipeline pulls league-wide team and
-player stats (Base + Advanced measure types) and full game logs from stats.nba.com via
-[`nba_api`](https://github.com/swar/nba_api) into a local DuckDB warehouse.
+**Milestone 2 complete — metrics layer + REST API.** The pipeline pulls league-wide team
+and player stats (Base + Advanced measure types) and full game logs from stats.nba.com
+via [`nba_api`](https://github.com/swar/nba_api) into a local DuckDB warehouse; SQL views
+normalize them into clean per-game analytics tables, served by a FastAPI backend.
 
 | Table | Contents |
 |---|---|
@@ -32,8 +33,21 @@ pip install -e ".[dev]"
 ```bash
 python scripts/ingest.py            # ingest default seasons into data/courtvision.duckdb
 python scripts/ingest.py 2022-23    # ingest specific season(s)
-pytest                              # smoke-test the ingested database
+python scripts/build_metrics.py     # (re)create the analytics views
+pytest                              # test the warehouse + API
+uvicorn courtvision.api.main:app --reload   # serve the API → http://127.0.0.1:8000/docs
 ```
+
+### API endpoints
+
+| Endpoint | Description |
+|---|---|
+| `GET /health` | Status + ingested seasons |
+| `GET /teams?season=2025-26` | All teams' season profile (record, ratings, pace, four-factor stats) |
+| `GET /teams/{team_id}` | Season history + home/away splits |
+| `GET /players/search?q=jokic` | Accent-insensitive player name search |
+| `GET /players/{player_id}` | Per-season stats: per-game, shooting efficiency, usage, ratings |
+| `GET /leaderboards/{stat}?season=&min_gp=` | Top players by any whitelisted stat (`pts_pg`, `ts_pct`, `pie`, …) |
 
 Query the warehouse with any DuckDB client:
 
@@ -52,7 +66,7 @@ datacenter IPs. All calls go through a retry/backoff wrapper with a politeness d
 ## Roadmap
 
 1. ✅ Ingestion pipeline + DuckDB warehouse
-2. Computed metrics layer + FastAPI backend
+2. ✅ Computed metrics layer + FastAPI backend
 3. ML models: player similarity, win probability, salary value
 4. React dashboards
 5. LLM layer: natural-language analytics + AI scouting reports (RAG, grounded in the warehouse)

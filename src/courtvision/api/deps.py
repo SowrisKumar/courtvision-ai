@@ -1,0 +1,25 @@
+"""FastAPI dependencies."""
+
+from collections.abc import Iterator
+
+import duckdb
+
+from courtvision.db.connection import get_connection
+
+
+def db() -> Iterator[duckdb.DuckDBPyConnection]:
+    """Read-only DuckDB connection per request.
+
+    Read-only connections can coexist with each other; the ingest script is the
+    only writer and runs out-of-process.
+    """
+    con = get_connection(read_only=True)
+    try:
+        yield con
+    finally:
+        con.close()
+
+
+def rows_to_dicts(result) -> list[dict]:
+    cols = [d[0] for d in result.description]
+    return [dict(zip(cols, row)) for row in result.fetchall()]
