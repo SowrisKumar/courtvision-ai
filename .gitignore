@@ -10,3 +10,4 @@ data/*.duckdb.wal
 .env
 .DS_Store
 .claude/settings.local.json
+data/models/
