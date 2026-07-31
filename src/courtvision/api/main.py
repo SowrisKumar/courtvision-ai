@@ -83,6 +83,21 @@ def team_detail(
     return {"seasons": seasons, "home_away_splits": splits}
 
 
+@app.get("/players")
+def list_players(
+    con: DB,
+    season: str | None = Query(None, description="defaults to the latest ingested season"),
+) -> list[dict]:
+    """All players with stats in a season: id, name, team. For browse/index UIs."""
+    if season is None:
+        season = con.execute("SELECT max(season) FROM v_player_season").fetchone()[0]
+    res = con.execute(
+        "SELECT player_id, player_name, team FROM v_player_season WHERE season = ?",
+        [season],
+    )
+    return rows_to_dicts(res)
+
+
 @app.get("/players/search")
 def search_players(
     con: DB,

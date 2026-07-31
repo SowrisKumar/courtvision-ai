@@ -45,6 +45,14 @@ def test_team_404(client):
     assert client.get("/teams/999999").status_code == 404
 
 
+def test_player_index(client):
+    players = client.get("/players").json()
+    assert len(players) > 20
+    assert {"player_id", "player_name", "team"} <= set(players[0])
+    latest = client.get("/health").json()["seasons"][-1]
+    assert players == client.get("/players", params={"season": latest}).json()
+
+
 def test_player_search_and_detail(client):
     hits = client.get("/players/search", params={"q": "jokic"}).json()
     assert hits and hits[0]["player_name"] == "Nikola Jokić"

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { api, type PlayerSeason, type SearchHit, type SimilarPlayer } from '../lib/api'
+import { api, type PlayerIndexRow, type PlayerSeason, type SearchHit, type SimilarPlayer } from '../lib/api'
 import { Card, ErrorNote, Loading, StatTile, chartInk } from '../components/ui'
 
 const TREND_SERIES = [
@@ -11,14 +11,25 @@ const TREND_SERIES = [
   { key: 'ast_pg', name: 'Assists', color: 'var(--series-3)' },
 ] as const
 
-export default function Players() {
+// "Dončić" -> "D": group by the accent-stripped first letter.
+const initialOf = (name: string) =>
+  name.normalize('NFD').replace(/[̀-ͯ]/g, '').charAt(0).toUpperCase()
+
+export default function Players({ seasons }: { seasons: string[] }) {
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<SearchHit[]>([])
   const [selected, setSelected] = useState<SearchHit | null>(null)
-  const [seasons, setSeasons] = useState<PlayerSeason[] | null>(null)
+  const [playerSeasons, setPlayerSeasons] = useState<PlayerSeason[] | null>(null)
   const [similar, setSimilar] = useState<SimilarPlayer[] | null>(null)
   const [error, setError] = useState('')
+  const [index, setIndex] = useState<PlayerIndexRow[] | null>(null)
   const debounce = useRef<ReturnType<typeof setTimeout>>(null)
+
+  const latestSeason = seasons[seasons.length - 1]
+
+  useEffect(() => {
+    api.playersIndex(latestSeason).then(setIndex).catch(() => setIndex([]))
+  }, [latestSeason])
 
   useEffect(() => {
     if (debounce.current) clearTimeout(debounce.current)
@@ -35,20 +46,21 @@ export default function Players() {
     setSelected(hit)
     setHits([])
     setQuery(hit.player_name)
-    setSeasons(null)
+    setPlayerSeasons(null)
     setSimilar(null)
     setError('')
-    api.player(hit.player_id).then((d) => setSeasons(d.seasons)).catch((e) => setError(e.message))
+    api.player(hit.player_id).then((d) => setPlayerSeasons(d.seasons)).catch((e) => setError(e.message))
     api.similar(hit.player_id).then((d) => setSimilar(d.similar)).catch(() => setSimilar([]))
   }
 
-  const latest = seasons?.[seasons.length - 1]
+  const latest = playerSeasons?.[playerSeasons.length - 1]
 
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Player explorer</h1>
 
-      <div className="relative max-w-md">
+      <div className="flex max-w-xl items-center gap-2">
+      <div className="relative w-full max-w-md">
         <input
           className="card w-full px-3 py-2 text-sm"
           placeholder="Search players, e.g. “jokic” or “doncic”…"
@@ -72,11 +84,67 @@ export default function Players() {
           </ul>
         )}
       </div>
+      {selected && (
+        <button
+          className="card shrink-0 cursor-pointer px-3 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          onClick={() => {
+            setSelected(null)
+            setQuery('')
+            setPlayerSeasons(null)
+            setSimilar(null)
+            setError('')
+          }}
+        >
+          ← All players
+        </button>
+      )}
+      </div>
 
       {error && <ErrorNote message={error} />}
-      {selected && !seasons && !error && <Loading />}
+      {selected && !playerSeasons && !error && <Loading />}
 
-      {latest && seasons && (
+      {!selected && (
+        <Card title={`All players, ${latestSeason}`}>
+          {!index ? (
+            <Loading />
+          ) : (
+            <div className="space-y-4">
+              {Object.entries(
+                index
+                  .slice()
+                  .sort((a, b) => a.player_name.localeCompare(b.player_name))
+                  .reduce<Record<string, PlayerIndexRow[]>>((groups, p) => {
+                    const letter = initialOf(p.player_name)
+                    ;(groups[letter] ??= []).push(p)
+                    return groups
+                  }, {}),
+              ).map(([letter, players]) => (
+                <div key={letter}>
+                  <div className="mb-1 border-b border-[var(--border)] pb-0.5 text-xs font-bold text-[var(--text-muted)]">
+                    {letter}
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 sm:grid-cols-3 lg:grid-cols-4">
+                    {players.map((p) => (
+                      <button
+                        key={p.player_id}
+                        className="flex items-baseline justify-between rounded px-1.5 py-0.5 text-left text-sm hover:bg-[var(--page)]"
+                        onClick={() =>
+                          pick({ player_id: p.player_id, player_name: p.player_name, latest_season: latestSeason })
+                        }
+                      >
+                        <span className="truncate">{p.player_name}</span>
+                        <span className="ml-2 shrink-0 text-xs text-[var(--text-muted)]">{p.team}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {latest && playerSeasons && (
         <>
           <div className="flex flex-wrap gap-3">
             <StatTile label="Points / game" value={latest.pts_pg.toFixed(1)} sub={latest.season} />
@@ -89,7 +157,7 @@ export default function Players() {
           <Card title={`${selected!.player_name}: per-game trend`}>
             <div className="h-72">
               <ResponsiveContainer>
-                <LineChart data={seasons} margin={{ top: 8, right: 24, bottom: 4, left: 0 }}>
+                <LineChart data={playerSeasons} margin={{ top: 8, right: 24, bottom: 4, left: 0 }}>
                   <CartesianGrid stroke={chartInk.grid} vertical={false} />
                   <XAxis
                     dataKey="season"

@@ -532,3 +532,15 @@ cd frontend && npm run dev                  # terminal 2 → http://localhost:51
 | API access | Dev-server proxy | **CORS middleware on FastAPI**: works, but ships a permissive-origins config that must be tightened at deploy; the proxy keeps the backend origin-agnostic until real deployment sets the policy. |
 | State management | `useState` + props | **Redux/TanStack Query**: four pages with per-page fetches don't justify a cache layer yet; TanStack Query becomes attractive with the LLM milestone's streaming/chat state. |
 | Node version pinning | Node 22 in CI, 26 locally | **Pin 26 everywhere**: 22 is the active LTS; CI on LTS catches "works only on bleeding edge" issues. |
+
+### Post-milestone addition: player directory (July 31, 2026)
+
+The Players page's empty state (just a search box) was replaced with a browsable
+directory: a new `GET /players?season=` endpoint lists every player with stats in a
+season, and the page renders them alphabetically, grouped by accent-stripped first
+letter (so Dončić files under D), in a responsive multi-column grid. Every name is
+clickable and behaves like a search selection; a "back to all players" button
+restores the directory. The full ~580-name flat list was rejected as a wall of text;
+letter grouping plus columns keeps it scannable. Directory data loads once per
+season and is sorted client-side with `localeCompare` (DuckDB's default collation
+would sort accented names after Z).

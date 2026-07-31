@@ -87,8 +87,16 @@ async function get<T>(path: string): Promise<T> {
   return res.json()
 }
 
+export interface PlayerIndexRow {
+  player_id: number
+  player_name: string
+  team: string
+}
+
 export const api = {
   health: () => get<{ status: string; seasons: string[] }>('/health'),
+  playersIndex: (season?: string) =>
+    get<PlayerIndexRow[]>(`/players${season ? `?season=${season}` : ''}`),
   teams: (season: string) => get<TeamSeason[]>(`/teams?season=${season}`),
   searchPlayers: (q: string) =>
     get<SearchHit[]>(`/players/search?q=${encodeURIComponent(q)}`),

@@ -55,7 +55,7 @@ export default function App() {
       ) : (
         <Routes>
           <Route path="/" element={<League seasons={seasons} />} />
-          <Route path="/players" element={<Players />} />
+          <Route path="/players" element={<Players seasons={seasons} />} />
           <Route path="/leaderboards" element={<Leaderboards seasons={seasons} />} />
           <Route path="/predict" element={<Predict seasons={seasons} />} />
         </Routes>
