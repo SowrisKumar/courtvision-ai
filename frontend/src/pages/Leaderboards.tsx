@@ -49,7 +49,7 @@ export default function Leaderboards({ seasons }: { seasons: string[] }) {
       {!rows ? (
         <Loading />
       ) : (
-        <Card title={`${stat.label} — ${season} (min. 40 games)`}>
+        <Card title={`${stat.label}, ${season} (min. 40 games)`}>
           <div style={{ height: rows.length * 34 + 40 }}>
             <ResponsiveContainer>
               <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 56, bottom: 4, left: 8 }} barCategoryGap={2}>

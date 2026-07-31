@@ -58,7 +58,7 @@ export default function Predict({ seasons }: { seasons: string[] }) {
       <h1 className="text-xl font-semibold">Game predictor</h1>
       <p className="max-w-xl text-sm text-[var(--text-secondary)]">
         Pregame win probability from each team's current form (last-10 record and margin,
-        season record, rest) — logistic regression, AUC 0.74 on a held-out season.
+        season record, rest). Logistic regression, AUC 0.74 on a held-out season.
       </p>
 
       <div className="flex flex-wrap items-end gap-3">
@@ -75,7 +75,7 @@ export default function Predict({ seasons }: { seasons: string[] }) {
 
       {prediction && pct != null && (
         <>
-          <Card title={`Home win probability — as of ${prediction.as_of_season}`}>
+          <Card title={`Home win probability, as of ${prediction.as_of_season}`}>
             <div className="mb-1 flex justify-between text-sm font-medium">
               <span>{prediction.home.team} (home)</span>
               <span>{prediction.away.team}</span>
@@ -97,7 +97,7 @@ export default function Predict({ seasons }: { seasons: string[] }) {
 
           <div className="grid gap-3 sm:grid-cols-2">
             {[prediction.home, prediction.away].map((f, i) => (
-              <Card key={f.team} title={`${f.team} ${i === 0 ? '(home)' : '(away)'} — current form`}>
+              <Card key={f.team} title={`${f.team} ${i === 0 ? '(home)' : '(away)'}: current form`}>
                 <div className="flex flex-wrap gap-3">
                   <StatTile label="Last 10 win%" value={(f.form_win_pct * 100).toFixed(0) + '%'} />
                   <StatTile

@@ -51,7 +51,7 @@ export default function Players() {
       <div className="relative max-w-md">
         <input
           className="card w-full px-3 py-2 text-sm"
-          placeholder="Search players — try “jokic” or “doncic”…"
+          placeholder="Search players, e.g. “jokic” or “doncic”…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           aria-label="Search players"
@@ -86,7 +86,7 @@ export default function Players() {
             <StatTile label="Usage" value={`${(latest.usg_pct * 100).toFixed(1)}%`} sub={latest.season} />
           </div>
 
-          <Card title={`${selected!.player_name} — per-game trend`}>
+          <Card title={`${selected!.player_name}: per-game trend`}>
             <div className="h-72">
               <ResponsiveContainer>
                 <LineChart data={seasons} margin={{ top: 8, right: 24, bottom: 4, left: 0 }}>

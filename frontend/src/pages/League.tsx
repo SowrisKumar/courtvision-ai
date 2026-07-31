@@ -29,7 +29,7 @@ export default function League({ seasons }: { seasons: string[] }) {
         <Loading />
       ) : (
         <>
-          <Card title={`Team efficiency landscape — ${season}`}>
+          <Card title={`Team efficiency landscape, ${season}`}>
             <p className="mb-2 text-xs text-[var(--text-muted)]">
               Offensive vs defensive rating (points per 100 possessions). Down-right is good.
             </p>

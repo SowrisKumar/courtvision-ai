@@ -49,7 +49,7 @@ export default function App() {
       </header>
 
       {error ? (
-        <ErrorNote message={`API unreachable: ${error} — is uvicorn running on :8000?`} />
+        <ErrorNote message={`API unreachable: ${error}. Is the backend running on port 8000?`} />
       ) : !seasons ? (
         <Loading />
       ) : (
