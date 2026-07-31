@@ -8,7 +8,7 @@ salary value), interactive dashboards, and an LLM-powered analytics assistant.
 
 ## Status
 
-**Milestone 3 complete — ML layer (similarity + win probability).** The pipeline pulls league-wide team
+**Milestone 4 complete — React dashboard.** The pipeline pulls league-wide team
 and player stats (Base + Advanced measure types) and full game logs from stats.nba.com
 via [`nba_api`](https://github.com/swar/nba_api) into a local DuckDB warehouse; SQL views
 normalize them into clean per-game analytics tables, served by a FastAPI backend.
@@ -40,6 +40,20 @@ python scripts/train_win_model.py   # train the win probability model
 pytest                              # test the warehouse + API (uses a synthetic DB if none ingested)
 uvicorn courtvision.api.main:app --reload   # serve the API → http://127.0.0.1:8000/docs
 ```
+
+### Dashboard (frontend/)
+
+React + TypeScript + Tailwind + Recharts, talking to the API through a dev proxy:
+
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5173 (needs the API running on :8000)
+```
+
+Pages: **League** (efficiency scatter + standings) · **Players** (search, career
+trends, ML-similar players) · **Leaderboards** (any whitelisted stat) · **Predict**
+(win probability for any matchup).
 
 ### API endpoints
 
@@ -73,6 +87,6 @@ datacenter IPs. All calls go through a retry/backoff wrapper with a politeness d
 1. ✅ Ingestion pipeline + DuckDB warehouse
 2. ✅ Computed metrics layer + FastAPI backend
 3. ✅ ML models: player similarity, win probability (salary value deferred — needs a licensed data source)
-4. React dashboards
+4. ✅ React dashboards
 5. LLM layer: natural-language analytics + AI scouting reports (RAG, grounded in the warehouse)
 6. Dockerized deployment + CI/CD

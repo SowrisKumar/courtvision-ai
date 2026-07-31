@@ -448,3 +448,87 @@ leak future form into training and inflate every metric.
 | Win-prob features | Team form only | **Player-level availability/ratings**: the single biggest upgrade (injuries move lines), but requires reliable daily injury data — a sourcing problem, deferred deliberately. |
 | Evaluation | Hold out the latest full season | **Random K-fold**: leaks time. **Rolling-origin backtest**: better still, and worth adding when the model gains features; one clean temporal split is honest and simple today. |
 | Salary model | Deferred | No legally solid public salary source; building on scraped Spotrac data would undermine the project's "production-grade" claim. |
+
+---
+
+## Milestone 4 — React Dashboard
+
+*Completed: July 31, 2026*
+
+### Non-technical summary
+
+The platform now has a face. A web dashboard (React) with four pages, all fed live by
+the API:
+
+- **League** — every team plotted on an offense-vs-defense efficiency map (the classic
+  quadrant chart analysts use), plus full sortable standings.
+- **Players** — type-ahead search (accent-insensitive, so "jokic" works), a career
+  per-game trend chart, headline stat tiles, and the ML similarity engine's picks
+  rendered as comparison cards.
+- **Leaderboards** — pick any stat and season; horizontal bar chart with exact values
+  labeled.
+- **Predict** — pick any two teams; the win probability model renders as a
+  two-color split bar with each team's current form beneath.
+
+The design follows a validated data-viz token system: light *and* dark mode (follows
+the OS setting), colorblind-safe series colors, one accent hue for single-series
+charts, muted grids, direct labels where they help.
+
+### What was done (technical)
+
+1. **Toolchain**: installed Node 26 (Homebrew); scaffolded with Vite (`react-ts`
+   template) in `frontend/`; added Tailwind CSS v4 (`@tailwindcss/vite` plugin —
+   no PostCSS config needed), Recharts, React Router.
+2. **Design tokens** (`src/index.css`): CSS custom properties for surfaces, ink
+   hierarchy, gridlines, and series colors — the reference palette from the dataviz
+   method, both light and dark values behind `prefers-color-scheme`. Charts reference
+   roles (`var(--series-1)`), never raw hex.
+3. **API client** (`src/lib/api.ts`): typed fetch wrapper with response interfaces
+   mirroring the API's JSON; errors surface FastAPI's `detail` message.
+4. **Dev/preview proxy** (`vite.config.ts`): `/api/*` → `127.0.0.1:8000` with prefix
+   strip — no CORS configuration needed on the backend at all.
+5. **Pages** (`src/pages/`): `League` (ScatterChart with reversed DRtg axis so
+   "good" is a consistent corner + standings table), `Players` (debounced search,
+   3-series LineChart with legend, similarity cards with score bars), `Leaderboards`
+   (vertical BarChart, value labels, stat/season filters in one row), `Predict`
+   (split probability bar using series-1 vs series-2 with a 2px surface gap, form
+   stat tiles). Loading/error/empty states on every page.
+6. **CI**: second job (`frontend`) — Node 22, `npm ci`, `npm run build` (which runs
+   `tsc -b` first, so type errors fail CI).
+
+### How it works
+
+```
+React (5173/4173) ──/api/*──▶ Vite proxy ──▶ FastAPI (8000) ──▶ DuckDB views/models
+        │
+   App.tsx loads /health once → seasons list → passed to pages as props
+   pages fetch on mount/filter-change → Recharts renders with CSS-token colors
+```
+
+Run the full stack locally:
+
+```bash
+uvicorn courtvision.api.main:app --reload   # terminal 1
+cd frontend && npm run dev                  # terminal 2 → http://localhost:5173
+```
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| "API unreachable" banner | Backend not running | Start uvicorn on port 8000 (the proxy target). |
+| `curl 127.0.0.1:4173` refused but browser works | Node ≥ 17 binds `localhost` to IPv6 `::1` | Use `http://localhost:...` (or `--host 127.0.0.1`). Bit us during verification. |
+| Charts render with no colors | CSS tokens missing | Series colors come from `index.css` custom properties; check the `--series-*` definitions. |
+| Type errors only in CI | Local dev server skips type-checking | `npm run build` runs `tsc -b`; run it locally before pushing. |
+| Empty dashboard after re-ingest | View/schema drift | Check `/api/health` first; then browser devtools network tab for the failing endpoint. |
+
+### Alternatives considered
+
+| Decision | Chosen | Alternatives & why rejected |
+|---|---|---|
+| Build tool | Vite | **Create React App**: deprecated. **Next.js**: SSR/routing framework overhead for what is a pure client-side dashboard against our own API. |
+| Charts | Recharts | **Plotly**: heavier bundle, harder to token-theme; **D3 direct**: maximum control, 5× the code for standard chart forms. Recharts is declarative React and styles cleanly from CSS variables. |
+| Styling | Tailwind v4 + CSS custom properties | **Plain CSS/modules**: more boilerplate for the same tokens; **component library (MUI etc.)**: fights the design tokens and bloats the bundle for 4 pages. |
+| API access | Dev-server proxy | **CORS middleware on FastAPI**: works, but ships a permissive-origins config that must be tightened at deploy; the proxy keeps the backend origin-agnostic until real deployment sets the policy. |
+| State management | `useState` + props | **Redux/TanStack Query**: four pages with per-page fetches don't justify a cache layer yet; TanStack Query becomes attractive with the LLM milestone's streaming/chat state. |
+| Node version pinning | Node 22 in CI, 26 locally | **Pin 26 everywhere**: 22 is the active LTS; CI on LTS catches "works only on bleeding edge" issues. |
