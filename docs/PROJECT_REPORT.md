@@ -533,6 +533,14 @@ cd frontend && npm run dev                  # terminal 2 → http://localhost:51
 | State management | `useState` + props | **Redux/TanStack Query**: four pages with per-page fetches don't justify a cache layer yet; TanStack Query becomes attractive with the LLM milestone's streaming/chat state. |
 | Node version pinning | Node 22 in CI, 26 locally | **Pin 26 everywhere**: 22 is the active LTS; CI on LTS catches "works only on bleeding edge" issues. |
 
+### Post-milestone addition: warehouse schema docs (August 1, 2026)
+
+`data/README.md` documents the warehouse for newcomers: the raw-vs-views two-layer
+design, every table's grain and row count, the traded-player convention
+(`TEAM_COUNT` > 1, one row per player-season), join keys, a mermaid ER diagram
+(GitHub renders it), and a copy-paste DuckDB snippet for exploring. Lives in `data/`
+next to the database file it describes; the data files themselves stay gitignored.
+
 ### Post-milestone addition: roster-turnover robustness, tested (July 31, 2026)
 
 **The question (from the user):** the model trains on past seasons, but teams trade,

@@ -41,7 +41,9 @@ normalize them into clean per-game analytics tables, served by a FastAPI backend
 | `player_season_base` / `player_season_advanced` | Per-player season stats (TS%, usage, …) |
 | `game_logs` | Team box score per game (2 rows per game) |
 
-Default seasons: 2023-24 through 2025-26 (see `src/courtvision/config.py`).
+Full table-by-table notes and an entity-relationship diagram: [`data/README.md`](data/README.md).
+Default seasons: 2023-24 through 2025-26 (see `src/courtvision/config.py`); 2022-23 is
+also ingested for prior-season features.
 
 ## Setup
 
