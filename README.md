@@ -2,9 +2,30 @@
 
 [![CI](https://github.com/SowrisKumar/courtvision-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/SowrisKumar/courtvision-ai/actions/workflows/ci.yml)
 
-An end-to-end NBA analytics & decision intelligence platform: automated data ingestion,
-an analytics warehouse, advanced metrics, ML models (player similarity, win probability,
-salary value), interactive dashboards, and an LLM-powered analytics assistant.
+## What is this?
+
+CourtVision AI is a basketball analytics website, built from scratch as a complete,
+working product. It collects real NBA statistics every day from the league's public
+stats site, organizes them into a fast local database, and turns them into things a
+coach, analyst, or fan can actually use:
+
+- **Explore any team.** See how every team ranks on offense and defense, its full
+  standings record, and how it performs at home versus on the road.
+- **Explore any player.** Search or browse all current players, view their career
+  trends, shooting efficiency, and role, and instantly get a list of the players
+  whose style of play is most similar, found by a machine learning model.
+- **Check the leaderboards.** Top players in scoring, rebounding, assists, efficiency,
+  and more, for any of the last four seasons.
+- **Predict any matchup.** Pick two teams and get the home team's win probability,
+  estimated by a model trained on thousands of past games and tested honestly on a
+  season it had never seen, where it called about two out of three games correctly.
+
+Under the hood it is a full modern data product: an automated data pipeline, an
+analytics database, a machine learning layer, a web API, and an interactive dashboard,
+each built the way a real engineering team would build them, with automated tests
+running on every change. A companion notebook documents the evidence behind every
+modeling decision, including the experiments that failed. Planned next: an AI assistant
+that answers basketball questions in plain English, backed by this same data.
 
 ## Status
 
