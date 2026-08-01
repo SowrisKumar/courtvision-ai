@@ -41,6 +41,14 @@ pytest                              # test the warehouse + API (uses a synthetic
 uvicorn courtvision.api.main:app --reload   # serve the API → http://127.0.0.1:8000/docs
 ```
 
+### Model evidence notebook
+
+[`notebooks/model_evaluation.ipynb`](notebooks/model_evaluation.ipynb) is the executed
+evidence file for every ML decision: baselines, 4 candidate model families on a held-out
+season, grid-search tuning, calibration, coefficient analysis, and the similarity-metric
+comparison (cosine vs Euclidean, z-scored vs raw, PCA check). All numbers regenerate from
+the warehouse by re-running the cells.
+
 ### Dashboard (frontend/)
 
 React + TypeScript + Tailwind + Recharts, talking to the API through a dev proxy:

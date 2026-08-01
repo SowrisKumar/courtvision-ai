@@ -533,6 +533,24 @@ cd frontend && npm run dev                  # terminal 2 → http://localhost:51
 | State management | `useState` + props | **Redux/TanStack Query**: four pages with per-page fetches don't justify a cache layer yet; TanStack Query becomes attractive with the LLM milestone's streaming/chat state. |
 | Node version pinning | Node 22 in CI, 26 locally | **Pin 26 everywhere**: 22 is the active LTS; CI on LTS catches "works only on bleeding edge" issues. |
 
+### Post-milestone addition: model evidence notebook (July 31, 2026)
+
+`notebooks/model_evaluation.ipynb` — an executed, committed notebook that serves as the
+evidence file for the ML layer, aimed at portfolio reviewers ("prove these choices are
+best"). It imports the production modules (never re-implements them) and shows:
+similarity results for three stars plus the rejected alternatives (Euclidean on raw and
+z-scored features) side by side; a PCA variance check (7 of 15 components for 90% —
+no compact latent space, so no reduction step); win-probability baselines (coin flip,
+always-home, better-record heuristic), four model families on the held-out 2025-26
+season, GridSearchCV tuning evidence (moves the third decimal), a calibration curve, and
+standardized coefficients. One notable honest finding: the better-record heuristic
+*matches* the model on pick accuracy (67.7% vs 67.6%) but is far worse on probability
+quality (AUC 0.680 vs 0.738) — the notebook frames probability quality as the product.
+Charts use the project's dataviz palette via `plt.rcParams`. Re-run:
+`jupyter nbconvert --to notebook --execute --inplace notebooks/model_evaluation.ipynb`.
+Committed with outputs deliberately (the outputs are the proof; GitHub renders them).
+Dev deps added: matplotlib, nbformat, nbclient, nbconvert, ipykernel.
+
 ### Post-milestone addition: player directory (July 31, 2026)
 
 The Players page's empty state (just a search box) was replaced with a browsable

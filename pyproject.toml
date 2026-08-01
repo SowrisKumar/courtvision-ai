@@ -18,6 +18,11 @@ dev = [
     "pytest>=8.0",
     "httpx>=0.27",
     "ruff>=0.5",
+    "matplotlib>=3.9",
+    "nbformat>=5.10",
+    "nbclient>=0.10",
+    "nbconvert>=7.16",
+    "ipykernel>=6.29",
 ]
 
 [build-system]
