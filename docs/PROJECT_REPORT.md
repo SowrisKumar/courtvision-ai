@@ -533,6 +533,101 @@ cd frontend && npm run dev                  # terminal 2 → http://localhost:51
 | State management | `useState` + props | **Redux/TanStack Query**: four pages with per-page fetches don't justify a cache layer yet; TanStack Query becomes attractive with the LLM milestone's streaming/chat state. |
 | Node version pinning | Node 22 in CI, 26 locally | **Pin 26 everywhere**: 22 is the active LTS; CI on LTS catches "works only on bleeding edge" issues. |
 
+## Milestone 5 — AI Analytics Assistant
+
+*Completed: August 1, 2026*
+
+### Non-technical summary
+
+The platform can now answer questions in plain English. Two features:
+
+1. **Ask CourtVision** (new "Ask" page): type a question like "which team improved its
+   defense the most this season?" and an AI assistant translates it into database
+   queries, runs them against our warehouse, reads the results, and writes an answer
+   using only the numbers it found. Crucially, every query it ran is shown under the
+   answer, so you can verify exactly where each claim came from. If the data can't
+   answer the question, it says so instead of guessing.
+
+2. **AI scouting reports** (button on every player page): a written scout's assessment
+   built strictly from that player's warehouse stats, league context, and ML-computed
+   comparable players. The AI is instructed to use only the data we hand it, so it
+   cannot invent injuries, draft history, or reputation.
+
+The AI provider is pluggable: set whichever API key you have (Gemini, Claude, or
+OpenAI) and the platform uses that provider automatically. Without a key, the rest of
+the site works normally and the AI features simply report that they're not configured.
+
+### What was done (technical)
+
+1. **Provider-agnostic LLM layer** (`src/courtvision/ai/llm.py`): three ~20-line
+   adapters (Gemini via `google-genai`, Claude via `anthropic`, OpenAI via `openai`)
+   behind one interface: `complete(system, messages) -> str`. Provider chosen by
+   env-var detection (`ANTHROPIC_API_KEY` > `GEMINI_API_KEY`/`GOOGLE_API_KEY` >
+   `OPENAI_API_KEY`), overridable with `COURTVISION_LLM`; models default per provider
+   (claude-opus-5 / gemini-2.5-flash / gpt-5-mini), overridable with
+   `COURTVISION_LLM_MODEL`. SDKs import lazily, live in an optional `[llm]` extra,
+   and CI needs none of them.
+2. **SQL-agent loop** (`ai/assistant.py`): the model gets a schema document (the three
+   `v_*` views only) and must reply with strict JSON: `{"sql": ...}` to query or
+   `{"answer": ...}` to finish. We execute, feed results back, repeat (max 4 queries,
+   hard cap on total calls). Failed SQL goes back to the model to fix. The response
+   carries every executed query + row previews for the UI's "how this was produced"
+   panel.
+3. **SQL guard** (`safe_execute`): single statement, must start with SELECT/WITH,
+   result rows capped at 40, and the connection is read-only anyway (defense in
+   depth). Tested against DROP/DELETE/UPDATE/multi-statement injection.
+4. **Grounded scouting** (`ai/scouting.py`): we gather the data ourselves (all the
+   player's seasons, league averages for context, similarity-engine output) and pass
+   it as JSON with instructions to use nothing else; fixed section structure
+   (PROFILE / OFFENSE / REBOUNDING AND DEFENSE / TRAJECTORY / COMPARABLE PLAYERS).
+5. **API**: `POST /ask` (400 outside 3-500 chars, 503 when unconfigured) and
+   `GET /players/{id}/scouting-report`; both report which provider/model answered.
+   LLM injected as a FastAPI dependency, so tests override it cleanly.
+6. **UI**: "Ask" page with example questions, transparency panel showing each SQL query
+   and its rows in collapsible sections; scouting report card on the player page.
+   All LLM output is sanitized server-side against the site's no-em-dash style rule.
+7. **8 new tests** (`tests/test_ai.py`, 27 total) using a scripted FakeLLM: provider
+   detection/priority/override, SQL guard, agent loop (happy path, bad-SQL recovery,
+   query-limit forcing), scouting grounding (the prompt provably contains the data),
+   endpoint behavior including the 503 path. Zero network calls.
+
+### Why these designs
+
+- **SQL agent instead of RAG/vector DB** (spec suggested FAISS/Chroma): the warehouse
+  is *structured*. Questions like "most improved defense" need aggregation and joins,
+  which SQL does exactly and embeddings approximate poorly. Vector retrieval earns its
+  place when there are unstructured documents (news, scouting text) to search; there
+  are none here yet.
+- **Strict-JSON protocol instead of native tool-calling APIs**: every provider has a
+  different tool-use wire format; a JSON-in-text protocol works identically on all
+  three, keeps adapters tiny, and the loop is our code, so behavior is testable with
+  fakes.
+- **Show the SQL**: grounding claims are only credible if inspectable. The UI's
+  transparency panel is the product version of the notebook's evidence-first ethos.
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `/ask` returns 503 | No API key in the backend's environment | `export GEMINI_API_KEY=...` (or Anthropic/OpenAI) in the terminal running uvicorn, then restart it. |
+| 401/permission errors from the provider | Invalid or restricted key | Verify the key works in the provider's console; check `COURTVISION_LLM` isn't forcing a provider whose key is absent. |
+| `ModuleNotFoundError: google.genai` etc. | SDK not installed | `pip install -e ".[llm]"`. |
+| Answers cite no queries (steps empty) | Model answered without querying | Usually fine for meta questions; if it's guessing stats, the system prompt forbids it — check the provider/model in the response and try a stronger model via `COURTVISION_LLM_MODEL`. |
+| Wrong/odd SQL errors repeatedly | Model unfamiliar with DuckDB dialect | The loop feeds errors back for self-correction (up to the cap); persistent failures usually mean the question needs data we don't have. |
+| Slow answers | Multiple sequential LLM+SQL rounds | Expected: each round is an LLM call; typical questions take 2-3 rounds. |
+
+### Alternatives considered
+
+| Decision | Chosen | Alternatives & why rejected |
+|---|---|---|
+| Grounding architecture | SQL agent over warehouse views | **RAG + vector DB**: wrong tool for structured aggregates; **direct NL->SQL one-shot**: no self-correction loop, brittle on first-try errors. |
+| Provider strategy | Env-detected, three adapters, tiny shared interface | **Single provider hardcoded**: user asked for key-agnostic behavior. **LangChain/LangGraph** (in spec): heavy abstraction for one loop we can own in ~80 lines; easier to test and debug without it. |
+| Tool invocation | Strict JSON protocol | **Native tool-calling per provider**: 3x the adapter surface for no capability gain at this scale. |
+| Safety | SELECT-only guard + read-only connection + row caps | **Trusting the model**: never; **sandboxed separate DB copy**: overkill while the connection is already read-only. |
+| Scouting grounding | We fetch data, model writes | **Model queries freely** (like /ask): reports need a fixed, complete data footprint; pre-gathering guarantees the same evidence every time and halves latency. |
+
+---
+
 ### Post-milestone addition: warehouse schema docs (August 1, 2026)
 
 `data/README.md` documents the warehouse for newcomers: the raw-vs-views two-layer

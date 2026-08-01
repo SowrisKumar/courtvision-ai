@@ -10,7 +10,10 @@ from typing import Annotated
 
 import duckdb
 from fastapi import Depends, FastAPI, HTTPException, Query
+from pydantic import BaseModel
 
+from courtvision.ai import assistant, scouting
+from courtvision.ai.llm import LLMClient, create_client
 from courtvision.api.deps import db, rows_to_dicts
 from courtvision.config import MODELS_DIR
 from courtvision.db.connection import get_connection
@@ -19,6 +22,19 @@ from courtvision.ml import win_probability
 from courtvision.ml.similarity import similar_players
 
 DB = Annotated[duckdb.DuckDBPyConnection, Depends(db)]
+
+
+def llm() -> LLMClient:
+    client = create_client()
+    if client is None:
+        raise HTTPException(
+            503,
+            "no LLM configured; set GEMINI_API_KEY, ANTHROPIC_API_KEY, or OPENAI_API_KEY",
+        )
+    return client
+
+
+LLM = Annotated[LLMClient, Depends(llm)]
 
 
 @asynccontextmanager
@@ -180,6 +196,31 @@ def predict_game(
         "model": meta["best_model"],
         "as_of_season": home["season"],
     }
+
+
+class AskRequest(BaseModel):
+    question: str
+
+
+@app.post("/ask")
+def ask_question(body: AskRequest, con: DB, client: LLM) -> dict:
+    question = body.question.strip()
+    if not 3 <= len(question) <= 500:
+        raise HTTPException(400, "question must be 3-500 characters")
+    result = assistant.ask(con, client, question)
+    result["provider"] = client.provider
+    result["model"] = client.model
+    return result
+
+
+@app.get("/players/{player_id}/scouting-report")
+def player_scouting_report(player_id: int, con: DB, client: LLM) -> dict:
+    report = scouting.scouting_report(con, client, player_id)
+    if report is None:
+        raise HTTPException(404, f"player {player_id} not found in ingested seasons")
+    report["provider"] = client.provider
+    report["model"] = client.model
+    return report
 
 
 # Whitelist of sortable leaderboard stats -> minimum-minutes filter applied.

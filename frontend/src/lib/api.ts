@@ -78,13 +78,47 @@ export interface Prediction {
   as_of_season: string
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`)
+export interface AskStep {
+  sql: string
+  rows: Record<string, unknown>[]
+  total_rows: number
+}
+
+export interface AskResult {
+  answer: string
+  steps: AskStep[]
+  provider: string
+  model: string
+}
+
+export interface ScoutingReport {
+  player_id: number
+  player_name: string
+  report: string
+  provider: string
+  model: string
+}
+
+async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => null)
     throw new Error(body?.detail ?? `${res.status} ${res.statusText}`)
   }
   return res.json()
+}
+
+async function get<T>(path: string): Promise<T> {
+  return handle(await fetch(`${BASE}${path}`))
+}
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  return handle(
+    await fetch(`${BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  )
 }
 
 export interface PlayerIndexRow {
@@ -108,4 +142,7 @@ export const api = {
     get<LeaderRow[]>(`/leaderboards/${stat}?season=${season}&limit=${limit}`),
   predict: (homeId: number, awayId: number) =>
     get<Prediction>(`/predict/game?home_team_id=${homeId}&away_team_id=${awayId}`),
+  ask: (question: string) => post<AskResult>('/ask', { question }),
+  scoutingReport: (playerId: number) =>
+    get<ScoutingReport>(`/players/${playerId}/scouting-report`),
 }

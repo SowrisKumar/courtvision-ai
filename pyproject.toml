@@ -14,6 +14,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+llm = [
+    "google-genai>=1.0",
+    "anthropic>=0.60",
+    "openai>=1.60",
+]
 dev = [
     "pytest>=8.0",
     "httpx>=0.27",

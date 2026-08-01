@@ -6,12 +6,14 @@ import League from './pages/League'
 import Players from './pages/Players'
 import Leaderboards from './pages/Leaderboards'
 import Predict from './pages/Predict'
+import Ask from './pages/Ask'
 
 const NAV = [
   { to: '/', label: 'League' },
   { to: '/players', label: 'Players' },
   { to: '/leaderboards', label: 'Leaderboards' },
   { to: '/predict', label: 'Predict' },
+  { to: '/ask', label: 'Ask' },
 ]
 
 export default function App() {
@@ -58,6 +60,7 @@ export default function App() {
           <Route path="/players" element={<Players seasons={seasons} />} />
           <Route path="/leaderboards" element={<Leaderboards seasons={seasons} />} />
           <Route path="/predict" element={<Predict seasons={seasons} />} />
+          <Route path="/ask" element={<Ask />} />
         </Routes>
       )}
     </div>

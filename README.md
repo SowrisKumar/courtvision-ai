@@ -29,7 +29,7 @@ that answers basketball questions in plain English, backed by this same data.
 
 ## Status
 
-**Milestone 4 complete — React dashboard.** The pipeline pulls league-wide team
+**Milestone 5 complete — AI analytics assistant.** The pipeline pulls league-wide team
 and player stats (Base + Advanced measure types) and full game logs from stats.nba.com
 via [`nba_api`](https://github.com/swar/nba_api) into a local DuckDB warehouse; SQL views
 normalize them into clean per-game analytics tables, served by a FastAPI backend.
@@ -98,6 +98,22 @@ trends, ML-similar players) · **Leaderboards** (any whitelisted stat) · **Pred
 | `GET /leaderboards/{stat}?season=&min_gp=` | Top players by any whitelisted stat (`pts_pg`, `ts_pct`, `pie`, …) |
 | `GET /players/{id}/similar?season=` | ML similarity engine: statistically closest players (z-scored profile, cosine) |
 | `GET /predict/game?home_team_id=&away_team_id=` | Pregame win probability from current team form (test AUC 0.74) |
+| `POST /ask` | Natural-language analytics: an LLM agent writes SQL, reads results, answers with sources |
+| `GET /players/{id}/scouting-report` | AI scouting report grounded strictly in warehouse data |
+
+### AI assistant setup
+
+The AI endpoints use whichever LLM API key is present (checked in this order):
+
+```bash
+export ANTHROPIC_API_KEY=...   # Claude (claude-opus-5)
+export GEMINI_API_KEY=...      # Gemini (gemini-2.5-flash)
+export OPENAI_API_KEY=...      # OpenAI (gpt-5-mini)
+```
+
+Optional: `COURTVISION_LLM=gemini` forces a provider, `COURTVISION_LLM_MODEL=...`
+overrides the model. Install the SDKs with `pip install -e ".[llm]"`. With no key
+set, the AI endpoints return 503 and everything else works normally.
 
 Query the warehouse with any DuckDB client:
 
@@ -119,5 +135,5 @@ datacenter IPs. All calls go through a retry/backoff wrapper with a politeness d
 2. ✅ Computed metrics layer + FastAPI backend
 3. ✅ ML models: player similarity, win probability (salary value deferred — needs a licensed data source)
 4. ✅ React dashboards
-5. LLM layer: natural-language analytics + AI scouting reports (RAG, grounded in the warehouse)
+5. ✅ LLM layer: natural-language analytics + AI scouting reports (SQL-agent, grounded in the warehouse)
 6. Dockerized deployment + CI/CD
