@@ -64,7 +64,7 @@ def test_similarity_unknown_player(con):
 
 
 def test_win_prob_dataset_no_leakage_nulls(con):
-    from courtvision.ml.features import WIN_PROB_FEATURES
+    from courtvision.ml.features import CARRYOVER_FEATURES, WIN_PROB_FEATURES
     from courtvision.ml.win_probability import build_dataset
 
     df = build_dataset(con)
@@ -73,6 +73,10 @@ def test_win_prob_dataset_no_leakage_nulls(con):
     assert set(df["home_win"].unique()) <= {0, 1}
     # each game appears exactly once
     assert df["game_id"].is_unique
+    # roster continuity: present, filled, and a valid share
+    assert not df[CARRYOVER_FEATURES].isna().any().any()
+    assert df[CARRYOVER_FEATURES].min().min() >= 0.0
+    assert df[CARRYOVER_FEATURES].max().max() <= 1.0
 
 
 def test_model_beats_chance(trained_meta):

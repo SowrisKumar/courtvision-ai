@@ -533,6 +533,35 @@ cd frontend && npm run dev                  # terminal 2 → http://localhost:51
 | State management | `useState` + props | **Redux/TanStack Query**: four pages with per-page fetches don't justify a cache layer yet; TanStack Query becomes attractive with the LLM milestone's streaming/chat state. |
 | Node version pinning | Node 22 in CI, 26 locally | **Pin 26 everywhere**: 22 is the active LTS; CI on LTS catches "works only on bleeding edge" issues. |
 
+### Post-milestone addition: roster-turnover robustness, tested (July 31, 2026)
+
+**The question (from the user):** the model trains on past seasons, but teams trade,
+players move, coaches change — how is that addressed?
+
+**The architecture answer:** the win probability model is deliberately **identity-free**.
+No team ID, no franchise history, no prior-season record is a feature — every input is
+current-season form (last-10 win%/margin, season-to-date win%, rest). Past seasons teach
+only the general form→outcome mapping, which transfers across seasons because it doesn't
+know who the teams are; a rebuilt roster is read from its own new games after ~6 games.
+
+**The empirical check:** we built `roster_carryover` — the share of a team's
+previous-season minutes played by players still on the roster (SQL in
+`ml/features.py::ROSTER_CARRYOVER_SQL`; 2022-23 was ingested so 2023-24 has a prior) —
+and A/B tested it on the held-out 2025-26 season. Result: log loss 0.6015 → 0.6014,
+AUC 0.736 → 0.735. **No measurable improvement, so it was not shipped** — once current
+form is known, roster turnover adds nothing, which validates the identity-free design.
+The dataset still exposes the carryover columns (`CARRYOVER_FEATURES`) for future
+experiments, the notebook documents the negative result in §3.6, and the tests assert
+the columns are filled and in [0, 1].
+
+**Honest residual gaps** (documented in the notebook): opening weeks (form needs 6+
+games — exactly when summer turnover matters most), the ~10 games after a mid-season
+trade or coach change (the form window spans the disruption), and tonight's
+injuries/rest (needs external player-availability data; the main gap to betting lines).
+
+Side effect: the warehouse now holds four seasons (2022-23 → 2025-26); training uses
+three of them, and the dashboard's season pickers gained 2022-23.
+
 ### Post-milestone addition: model evidence notebook (July 31, 2026)
 
 `notebooks/model_evaluation.ipynb` — an executed, committed notebook that serves as the

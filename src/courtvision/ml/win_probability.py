@@ -19,7 +19,7 @@ from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from courtvision.ml.features import GAME_DATASET_SQL, WIN_PROB_FEATURES
+from courtvision.ml.features import CARRYOVER_FEATURES, GAME_DATASET_SQL, WIN_PROB_FEATURES
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +28,12 @@ META_FILE = "win_probability.json"
 
 
 def build_dataset(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    return con.execute(GAME_DATASET_SQL).df()
+    df = con.execute(GAME_DATASET_SQL).df()
+    # Seasons with no prior season in the warehouse have NULL carryover; fill
+    # with the mean so the columns are always usable as features.
+    for col in CARRYOVER_FEATURES:
+        df[col] = df[col].fillna(df[col].mean())
+    return df
 
 
 def train(
