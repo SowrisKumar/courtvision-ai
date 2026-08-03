@@ -628,6 +628,76 @@ the site works normally and the AI features simply report that they're not confi
 
 ---
 
+## Milestone 6 — Dockerized Deployment & CI/CD
+
+*Completed: August 3, 2026*
+
+### Non-technical summary
+
+The whole platform now runs as two standard containers, which means it can be started
+on any machine (or cloud server) with two commands, without installing Python, Node,
+or any of the project's libraries. One container runs the data/API side; the other
+serves the website and forwards data requests to the first. The automated pipeline
+now also builds these containers on every code change and publishes them to GitHub's
+container registry, so a server can pull ready-made images instead of building from
+source. If no real NBA data is available, a demo switch boots the platform with
+realistic synthetic data, so anyone can try it instantly.
+
+### What was done (technical)
+
+1. **API image** (`Dockerfile`, python:3.12-slim): installs the package, ships the
+   scripts plus the synthetic-warehouse builder. The warehouse is deliberately NOT
+   baked in — a boot-time `entrypoint.sh` (a) uses the mounted `data/` warehouse, or
+   builds a synthetic one when `COURTVISION_DEMO=1`, else exits with instructions;
+   (b) refreshes the analytics views; (c) trains the win-probability model if the
+   artifact is missing; (d) execs uvicorn. `COURTVISION_DB`/`COURTVISION_MODELS` env
+   overrides (added in earlier milestones) are what make the image relocatable.
+2. **Web image** (`frontend/Dockerfile`): two-stage — node:22-alpine builds the Vite
+   bundle, nginx:1.27-alpine serves it. `nginx.conf` proxies `/api/*` to the api
+   service (same prefix-strip contract as the dev proxy, so the frontend code is
+   deployment-agnostic), sets a 120s read timeout for slow LLM answers, and routes
+   unknown paths to `index.html` for SPA client-side routing.
+3. **`docker-compose.yml`**: api (with `./data` volume + LLM key passthrough) + web
+   (:8080). Verified locally end-to-end: dashboard served, API proxied, predictions
+   flowing, SPA routes working, and a separate demo-mode boot from scratch.
+4. **CI/CD**: new `docker` job (needs: test + frontend) builds both images on every
+   push/PR and pushes `ghcr.io/sowriskumar/courtvision-{api,web}:latest` to GitHub
+   Container Registry on `main`, authenticated with the workflow's own GITHUB_TOKEN
+   (`packages: write`).
+
+### How it works
+
+```
+push to main ─▶ CI: lint/test ─▶ frontend build ─▶ docker job ─▶ GHCR images
+                                                                    │ docker pull
+local: ingest.py (residential IP) ─▶ data/ ── volume ──▶ api container (:8000)
+                                                              ▲ proxy /api/*
+                                              web container (nginx :8080) ─▶ browser
+```
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| api container exits: "no warehouse" | `./data` not mounted or empty | Run `python scripts/ingest.py` first, or `COURTVISION_DEMO=1 docker compose up`. |
+| Dashboard loads, data calls fail | api container down or nginx can't resolve `api` | `docker compose ps`; both services must be in the same compose network (service name `api` is hardcoded in nginx.conf). |
+| AI features 503 in Docker | Key not in the container env | Export the key in the shell running `docker compose up` (compose passes it through), then recreate the containers. |
+| GHCR push fails in CI | Package permissions | The job sets `permissions: packages: write`; first push may need package visibility settings on GitHub if the package pre-exists. |
+| Stale frontend after changes | Cached image layers | `docker compose up --build` (or `--no-cache` for a hard rebuild). |
+| Ingestion from a cloud server fails | stats.nba.com blocks datacenter IPs | By design: ingest locally, ship `data/` to the server (rsync); the API only needs read access. |
+
+### Alternatives considered
+
+| Decision | Chosen | Alternatives & why rejected |
+|---|---|---|
+| Topology | Two containers (api + nginx web) | **Single container serving static from FastAPI**: fewer moving parts but conflates release cadences and loses nginx's static-file/SPA/proxy strengths; **k8s**: absurd overkill for this footprint. |
+| Warehouse packaging | Volume-mounted, not baked into the image | **Bake the 7MB DuckDB into the image**: tempting and small, but couples data freshness to image rebuilds and publishes NBA-derived data in a public registry (licensing gray area). The demo mode covers the "just try it" case with synthetic data instead. |
+| Model artifact | Train at boot if missing (~2s) | **Bake into image**: same coupling problem; training is fast enough to do on first boot. |
+| Registry | GHCR via GITHUB_TOKEN | **Docker Hub**: extra account + secret to manage; GHCR needs zero configuration in this repo. |
+| Cloud target | Documented (any Docker host), not auto-deployed | An actual AWS/Fly deploy needs an account, billing, and a domain — user decisions; the images + compose file make the remaining work minimal, and the residential-IP ingestion constraint means a cloud box can't self-refresh data anyway. |
+
+---
+
 ### Post-milestone addition: warehouse schema docs (August 1, 2026)
 
 `data/README.md` documents the warehouse for newcomers: the raw-vs-views two-layer

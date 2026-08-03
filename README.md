@@ -29,7 +29,7 @@ that answers basketball questions in plain English, backed by this same data.
 
 ## Status
 
-**Milestone 5 complete — AI analytics assistant.** The pipeline pulls league-wide team
+**Milestone 6 complete — Docker deployment.** The pipeline pulls league-wide team
 and player stats (Base + Advanced measure types) and full game logs from stats.nba.com
 via [`nba_api`](https://github.com/swar/nba_api) into a local DuckDB warehouse; SQL views
 normalize them into clean per-game analytics tables, served by a FastAPI backend.
@@ -123,6 +123,28 @@ con = get_connection(read_only=True)
 con.execute("SELECT TEAM_NAME, NET_RATING FROM team_season_advanced ORDER BY NET_RATING DESC LIMIT 5").df()
 ```
 
+## Run with Docker
+
+The whole stack (API + dashboard behind nginx) in two commands:
+
+```bash
+python scripts/ingest.py            # once, from a residential connection
+docker compose up --build           # then open http://localhost:8080
+```
+
+`docker compose up` serves the dashboard on :8080 (nginx proxies `/api/*` to the
+API container) and the raw API on :8000. LLM keys (`GEMINI_API_KEY`, ...) are passed
+through from your shell. No ingested data? `COURTVISION_DEMO=1 docker compose up`
+boots with a synthetic warehouse.
+
+CI builds both images on every push and publishes them to GHCR from `main`:
+`ghcr.io/sowriskumar/courtvision-api` and `ghcr.io/sowriskumar/courtvision-web`.
+
+**Deploying to a server:** pull both images, run them with the same compose topology,
+and ship your locally-ingested `data/` directory to the server (rsync/scp) — the
+ingestion itself must keep running from a residential IP because stats.nba.com blocks
+datacenter ranges. Any Docker host works (a small VM, AWS Lightsail/ECS, Fly.io).
+
 ## Notes on data sourcing
 
 stats.nba.com is an unofficial API: it is rate-limited and occasionally blocks
@@ -136,4 +158,4 @@ datacenter IPs. All calls go through a retry/backoff wrapper with a politeness d
 3. ✅ ML models: player similarity, win probability (salary value deferred — needs a licensed data source)
 4. ✅ React dashboards
 5. ✅ LLM layer: natural-language analytics + AI scouting reports (SQL-agent, grounded in the warehouse)
-6. Dockerized deployment + CI/CD
+6. ✅ Dockerized deployment + CI/CD (images published to GHCR)
