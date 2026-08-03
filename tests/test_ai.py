@@ -29,6 +29,13 @@ class FakeLLM:
 @pytest.fixture()
 def con():
     from courtvision.db.connection import get_connection
+    from courtvision.metrics.views import build_views
+
+    # Fresh warehouses (CI's synthetic DB) have no views yet; build them with a
+    # short-lived write connection, then hand tests a read-only one.
+    writer = get_connection()
+    build_views(writer)
+    writer.close()
 
     con = get_connection(read_only=True)
     yield con
