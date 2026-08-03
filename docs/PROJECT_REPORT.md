@@ -698,6 +698,58 @@ local: ingest.py (residential IP) ─▶ data/ ── volume ──▶ api conta
 
 ---
 
+### Post-milestone addition: .env configuration + non-technical user guide (August 3, 2026)
+
+**The problem.** API keys had no home. They were set with `export GEMINI_API_KEY=...`
+in whichever shell ran the backend, so they evaporated every session and there was no
+file to point anyone at. Separately, every doc in the repo (README, `data/README.md`,
+this report) assumed an engineer reader, leaving nothing to hand a recruiter, coach, or
+family member.
+
+**`.env` support.** `python-dotenv` is now a core dependency, and
+`src/courtvision/__init__.py` calls `load_dotenv()` on the project-root `.env`. A
+committed `.env.example` documents every supported variable; `cp .env.example .env` and
+editing one file now configures API keys, provider/model selection, warehouse paths, and
+demo mode for every entry point.
+
+The placement matters and cost one debugging cycle. The obvious home was `config.py`,
+but that failed the first verification: `ai/llm.py` reads `os.environ` directly and
+never imports `config`, so `load_dotenv` never fired for the AI path. Moving it to the
+package `__init__.py` guarantees it runs before any `courtvision.*` submodule reads the
+environment.
+
+**Precedence is the safety property**, verified explicitly rather than assumed:
+`load_dotenv` does not override variables already present, so a shell `export` beats
+`.env`, and CI, `tests/conftest.py` (which sets `COURTVISION_DB` before import), and
+Docker's `environment:` block all keep control. Confirmed with three runs: `.env` alone
+detects the provider; a shell export wins over `.env`; `COURTVISION_DB` from the
+environment still redirects the warehouse. `.env` was already gitignored and is now also
+in `.dockerignore` (the Dockerfile's explicit `COPY` list never included it, so this is
+defense in depth). Docker Compose reads the same file natively, verified via
+`docker compose config`.
+
+**`docs/USER_GUIDE.md`** is written for someone who has never opened a terminal: what
+the product is, installing Docker Desktop, two clearly separated start paths (instant
+demo with synthetic data vs. real ingested data), a page-by-page tour explaining how to
+*read* each chart (including that the League scatter's defensive axis is deliberately
+inverted so bottom-right is best), how to add an AI key, plain-English troubleshooting,
+and a glossary of every statistic the dashboard displays. The honest framings carry over:
+the predictor calls about two in three games and cannot see injuries; the Ask page shows
+its queries so answers are checkable. No em dashes, matching the product voice rule.
+
+| Symptom | Fix |
+|---|---|
+| Key in `.env` seems ignored | A shell `export` of the same variable wins by design; `unset` it or edit the export. Restart the API after editing `.env`. |
+| Works locally, breaks in CI | CI sets real env vars, which correctly outrank `.env`; CI has no `.env` at all. |
+| New env var not picked up | Ensure it is read after `import courtvision`; anything reading `os.environ` at module import of a non-`courtvision` module runs too early. |
+
+| Decision | Chosen | Alternatives & why rejected |
+|---|---|---|
+| Key storage | Gitignored `.env` + committed `.env.example` | **Shell profile (`~/.zshrc`)**: invisible to collaborators, machine-specific, not discoverable from the repo. **Secrets manager**: correct for production, disproportionate for a single-developer project. |
+| `load_dotenv` location | Package `__init__.py` | **`config.py`**: proven insufficient (the AI path never imports it). **Per-module calls**: repetitive and easy to forget in new modules. |
+| Override semantics | Environment wins over `.env` (library default) | **`override=True`**: would let a stale local `.env` silently hijack CI and Docker settings. |
+| Guide format | Separate `docs/USER_GUIDE.md` | **Expanding the README**: would bury the technical content non-technical readers do not need, and vice versa. |
+
 ### Post-milestone addition: warehouse schema docs (August 1, 2026)
 
 `data/README.md` documents the warehouse for newcomers: the raw-vs-views two-layer

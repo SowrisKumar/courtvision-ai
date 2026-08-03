@@ -20,12 +20,17 @@ coach, analyst, or fan can actually use:
   estimated by a model trained on thousands of past games and tested honestly on a
   season it had never seen, where it called about two out of three games correctly.
 
+It also includes an AI assistant: ask a question in plain English and it queries the
+database, then answers with the numbers it found and shows you the exact queries it ran.
+
 Under the hood it is a full modern data product: an automated data pipeline, an
-analytics database, a machine learning layer, a web API, and an interactive dashboard,
-each built the way a real engineering team would build them, with automated tests
-running on every change. A companion notebook documents the evidence behind every
-modeling decision, including the experiments that failed. Planned next: an AI assistant
-that answers basketball questions in plain English, backed by this same data.
+analytics database, a machine learning layer, a web API, an interactive dashboard, and
+a containerized deployment, each built the way a real engineering team would build them,
+with automated tests running on every change. A companion notebook documents the
+evidence behind every modeling decision, including the experiments that failed.
+
+> **Not a developer?** Start with the [plain-language user guide](docs/USER_GUIDE.md),
+> which walks through starting the app and using every page, with no jargon.
 
 ## Status
 
@@ -101,19 +106,40 @@ trends, ML-similar players) · **Leaderboards** (any whitelisted stat) · **Pred
 | `POST /ask` | Natural-language analytics: an LLM agent writes SQL, reads results, answers with sources |
 | `GET /players/{id}/scouting-report` | AI scouting report grounded strictly in warehouse data |
 
-### AI assistant setup
+## Configuration: where to put your API keys
 
-The AI endpoints use whichever LLM API key is present (checked in this order):
+**All keys and settings live in one file: `.env` in the project root.** It is
+gitignored, so nothing you put there reaches GitHub.
 
 ```bash
-export ANTHROPIC_API_KEY=...   # Claude (claude-opus-5)
-export GEMINI_API_KEY=...      # Gemini (gemini-2.5-flash)
-export OPENAI_API_KEY=...      # OpenAI (gpt-5-mini)
+cp .env.example .env     # then open .env and paste your key
 ```
 
-Optional: `COURTVISION_LLM=gemini` forces a provider, `COURTVISION_LLM_MODEL=...`
-overrides the model. Install the SDKs with `pip install -e ".[llm]"`. With no key
-set, the AI endpoints return 503 and everything else works normally.
+[`.env.example`](.env.example) lists every supported setting with comments. The
+AI features need exactly one LLM key; when several are set, the first match wins
+in this order:
+
+| Variable | Provider | Default model | Get a key |
+|---|---|---|---|
+| `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | Google Gemini | `gemini-2.5-flash` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (free tier) |
+| `ANTHROPIC_API_KEY` | Anthropic Claude | `claude-opus-5` | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| `OPENAI_API_KEY` | OpenAI | `gpt-5-mini` | [platform.openai.com](https://platform.openai.com/api-keys) |
+
+Restart the API after editing `.env`. `docker compose` reads the same file
+automatically, so one edit covers both local and container runs. A real shell
+`export` still overrides `.env` if you want a one-off change.
+
+With no key set, the AI endpoints return 503 and every other page works normally.
+Install the provider SDKs with `pip install -e ".[llm]"`.
+
+**Other things worth changing, and where:**
+
+| What | File |
+|---|---|
+| Default model per provider | `DEFAULT_MODELS` in [`src/courtvision/ai/llm.py`](src/courtvision/ai/llm.py) |
+| Seasons ingested by default | `DEFAULT_SEASONS` in [`src/courtvision/config.py`](src/courtvision/config.py) |
+| Warehouse / model file locations | `COURTVISION_DB`, `COURTVISION_MODELS` in `.env` |
+| Similarity qualification floor | `MIN_GP`, `MIN_MIN_PG` in [`src/courtvision/ml/similarity.py`](src/courtvision/ml/similarity.py) |
 
 Query the warehouse with any DuckDB client:
 

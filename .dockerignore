@@ -12,3 +12,4 @@ docs
 .github
 .claude
 .DS_Store
+.env
