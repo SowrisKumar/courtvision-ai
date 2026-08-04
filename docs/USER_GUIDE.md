@@ -41,11 +41,13 @@ not need to understand them.
 
 ## Starting the app
 
-First, point the Terminal at the project folder. Copy this line, paste it, press Enter:
+First, point the Terminal at the project folder. Type `cd ` (the letters c and d, then
+a space) but do not press Enter yet. Now drag the CourtVision AI folder from Finder or
+File Explorer onto the Terminal window: it fills in the location for you. Then press
+Enter.
 
-```bash
-cd "/Users/apple/Desktop/ /Knowledge Building/Projects/CourtVision AI"
-```
+You are in the right place if you type `ls` (or `dir` on Windows), press Enter, and see
+names like `README.md`, `scripts`, and `frontend`.
 
 Now pick one of the two options below.
 
@@ -74,12 +76,15 @@ coming from data centers.
 Run these two commands, one at a time, waiting for each to finish:
 
 ```bash
-python3 -m venv .venv && ./.venv/bin/pip install -e .
+python3 -m venv .venv && ./.venv/bin/pip install -e ".[llm]"
 ./.venv/bin/python scripts/ingest.py
 ```
 
 The first sets up the tools, the second downloads four seasons of NBA statistics. The
 download takes a couple of minutes and prints a running list of what it collected.
+
+(If the first command complains that `.venv` already exists, the tools are already set
+up and you can skip straight to the second line.)
 
 Then start the app:
 

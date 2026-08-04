@@ -60,10 +60,22 @@ class SQLGuardError(ValueError):
     pass
 
 
+# Single-quoted string literals, with '' as the escaped quote. Blanked out before
+# looking for a statement separator so a legitimate value like 'A;B' is not
+# mistaken for a second statement.
+_STRING_LITERAL = re.compile(r"'(?:[^']|'')*'")
+
+
 def safe_execute(con: duckdb.DuckDBPyConnection, sql: str) -> tuple[list[dict], int]:
-    """Run one guarded SELECT. Returns (rows as dicts, total row count)."""
+    """Run one guarded SELECT. Returns (rows as dicts, total row count).
+
+    This is only the first of two layers. The second, and the one that actually
+    contains a hostile query, is the connection itself: the API passes a
+    read-only, `enable_external_access=False` handle (see api/deps.db), so no
+    SELECT reaching this point can write, read local files, or open a network.
+    """
     statement = sql.strip().rstrip(";").strip()
-    if ";" in statement:
+    if ";" in _STRING_LITERAL.sub("''", statement):
         raise SQLGuardError("only a single statement is allowed")
     if not re.match(r"^(select|with)\b", statement, re.IGNORECASE):
         raise SQLGuardError("only SELECT queries are allowed")

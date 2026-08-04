@@ -26,6 +26,25 @@ DEFAULT_MODELS = {
 
 MAX_TOKENS = 16000
 
+# pip extra that installs each provider's SDK (see pyproject [project.optional-dependencies]).
+_SDK_PACKAGES = {
+    "anthropic": "anthropic",
+    "gemini": "google-genai",
+    "openai": "openai",
+}
+
+
+class LLMSDKMissingError(RuntimeError):
+    """A key is configured but the provider's SDK is not installed."""
+
+    def __init__(self, provider: str):
+        self.provider = provider
+        self.package = _SDK_PACKAGES[provider]
+        super().__init__(
+            f"{provider} API key is set but the {self.package} package is not installed; "
+            'install it with: pip install -e ".[llm]"'
+        )
+
 
 class LLMClient(Protocol):
     provider: str
@@ -117,10 +136,18 @@ _ADAPTERS = {"anthropic": AnthropicClient, "gemini": GeminiClient, "openai": Ope
 
 
 def create_client() -> LLMClient | None:
-    """Client for the configured provider, or None if no key is set."""
+    """Client for the configured provider, or None if no key is set.
+
+    Raises LLMSDKMissingError when a key is configured but the provider SDK is
+    absent, so the API can answer 503 with an actionable message rather than
+    letting the lazy import surface as a 500.
+    """
     detected = detect_provider()
     if detected is None:
         return None
     provider, api_key = detected
-    model = os.environ.get("COURTVISION_LLM_MODEL", DEFAULT_MODELS[provider])
-    return _ADAPTERS[provider](api_key=api_key, model=model)
+    model = (os.environ.get("COURTVISION_LLM_MODEL") or "").strip() or DEFAULT_MODELS[provider]
+    try:
+        return _ADAPTERS[provider](api_key=api_key, model=model)
+    except ImportError as exc:
+        raise LLMSDKMissingError(provider) from exc

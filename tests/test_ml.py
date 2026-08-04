@@ -14,6 +14,10 @@ JOKIC = 203999
 # concurrently in one process, so ordering matters: the write connection
 # (views + training) is opened and closed first, then the API client (whose
 # lifespan briefly opens a write connection), then the read-only test handle.
+#
+# For the same reason the test handle must use the *same* config as the API's
+# request connections (allow_external=False) -- DuckDB also refuses two
+# concurrent connections to one file with differing configurations.
 
 
 @pytest.fixture(scope="module")
@@ -41,7 +45,7 @@ def client(trained_meta):
 def con(client):
     from courtvision.db.connection import get_connection
 
-    con = get_connection(read_only=True)
+    con = get_connection(read_only=True, allow_external=False)
     yield con
     con.close()
 
@@ -104,3 +108,26 @@ def test_predict_endpoint(client, con):
     assert client.get(
         "/predict/game", params={"home_team_id": 1, "away_team_id": 2}
     ).status_code == 404
+    # a team cannot play itself: the model would happily return ~0.59
+    assert client.get(
+        "/predict/game", params={"home_team_id": a[0], "away_team_id": a[0]}
+    ).status_code == 400
+
+
+def test_train_rejects_unknown_test_season(con):
+    from courtvision.ml.win_probability import train
+
+    with pytest.raises(ValueError, match="not in the warehouse"):
+        train(con, MODELS_DIR, test_season="1999-00")
+
+
+def test_train_requires_two_seasons(con, monkeypatch):
+    """One season means an empty training split; fail with a readable message."""
+    from courtvision.ml import win_probability
+
+    full = win_probability.build_dataset(con)
+    one_season = full[full["season"] == full["season"].max()]
+    monkeypatch.setattr(win_probability, "build_dataset", lambda _con: one_season)
+
+    with pytest.raises(ValueError, match="at least 2 ingested seasons"):
+        win_probability.train(con, MODELS_DIR)

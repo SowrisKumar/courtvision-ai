@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
 from courtvision.ai import assistant, scouting
-from courtvision.ai.llm import LLMClient, create_client
+from courtvision.ai.llm import LLMClient, LLMSDKMissingError, create_client
 from courtvision.api.deps import db, rows_to_dicts
 from courtvision.config import MODELS_DIR
 from courtvision.db.connection import get_connection
@@ -25,7 +25,10 @@ DB = Annotated[duckdb.DuckDBPyConnection, Depends(db)]
 
 
 def llm() -> LLMClient:
-    client = create_client()
+    try:
+        client = create_client()
+    except LLMSDKMissingError as exc:
+        raise HTTPException(503, str(exc)) from exc
     if client is None:
         raise HTTPException(
             503,
@@ -179,6 +182,8 @@ def predict_game(
     home_team_id: int = Query(...),
     away_team_id: int = Query(...),
 ) -> dict:
+    if home_team_id == away_team_id:
+        raise HTTPException(400, "home_team_id and away_team_id must be different teams")
     loaded = win_probability.load(MODELS_DIR)
     if loaded is None:
         raise HTTPException(503, "win probability model not trained; run scripts/train_win_model.py")
@@ -194,6 +199,10 @@ def predict_game(
         "away": away,
         "home_win_probability": round(p, 3),
         "model": meta["best_model"],
+        # Held-out metrics travel with the prediction so the UI never has to
+        # hardcode (and slowly invalidate) the model's accuracy claims.
+        "model_auc": meta["candidates"][meta["best_model"]]["auc"],
+        "model_test_season": meta["test_season"],
         "as_of_season": home["season"],
     }
 
@@ -223,7 +232,9 @@ def player_scouting_report(player_id: int, con: DB, client: LLM) -> dict:
     return report
 
 
-# Whitelist of sortable leaderboard stats -> minimum-minutes filter applied.
+# Whitelist of sortable leaderboard stats. Interpolated into the ORDER BY, so
+# membership here is what keeps the query injection-free; volume is filtered by
+# the min_gp (games played) parameter below.
 LEADERBOARD_STATS = {
     "pts_pg", "reb_pg", "ast_pg", "stl_pg", "blk_pg",
     "ts_pct", "efg_pct", "usg_pct", "net_rating", "pie", "fg3a_pg",

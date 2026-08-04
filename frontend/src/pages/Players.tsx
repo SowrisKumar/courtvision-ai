@@ -21,6 +21,7 @@ export default function Players({ seasons }: { seasons: string[] }) {
   const [selected, setSelected] = useState<SearchHit | null>(null)
   const [playerSeasons, setPlayerSeasons] = useState<PlayerSeason[] | null>(null)
   const [similar, setSimilar] = useState<SimilarPlayer[] | null>(null)
+  const [similarError, setSimilarError] = useState('')
   const [error, setError] = useState('')
   const [index, setIndex] = useState<PlayerIndexRow[] | null>(null)
   const [report, setReport] = useState<ScoutingReport | null>(null)
@@ -43,6 +44,9 @@ export default function Players({ seasons }: { seasons: string[] }) {
     debounce.current = setTimeout(() => {
       api.searchPlayers(query.trim()).then(setHits).catch(() => setHits([]))
     }, 250)
+    return () => {
+      if (debounce.current) clearTimeout(debounce.current)
+    }
   }, [query])
 
   function pick(hit: SearchHit) {
@@ -51,11 +55,16 @@ export default function Players({ seasons }: { seasons: string[] }) {
     setQuery(hit.player_name)
     setPlayerSeasons(null)
     setSimilar(null)
+    setSimilarError('')
     setReport(null)
     setReportError('')
     setError('')
     api.player(hit.player_id).then((d) => setPlayerSeasons(d.seasons)).catch((e) => setError(e.message))
-    api.similar(hit.player_id).then((d) => setSimilar(d.similar)).catch(() => setSimilar([]))
+    // A failed request is not the same as "no comparable players": keep them
+    // apart so a server error never renders as a statement about the player.
+    api.similar(hit.player_id)
+      .then((d) => setSimilar(d.similar))
+      .catch((e) => setSimilarError((e as Error).message))
   }
 
   const latest = playerSeasons?.[playerSeasons.length - 1]
@@ -97,6 +106,7 @@ export default function Players({ seasons }: { seasons: string[] }) {
             setQuery('')
             setPlayerSeasons(null)
             setSimilar(null)
+            setSimilarError('')
             setError('')
           }}
         >
@@ -225,7 +235,9 @@ export default function Players({ seasons }: { seasons: string[] }) {
           </Card>
 
           <Card title="Statistically similar players (ML)">
-            {!similar ? (
+            {similarError ? (
+              <ErrorNote message={similarError} />
+            ) : !similar ? (
               <Loading />
             ) : similar.length === 0 ? (
               <p className="text-sm text-[var(--text-muted)]">

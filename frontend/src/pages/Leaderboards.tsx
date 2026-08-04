@@ -22,6 +22,7 @@ export default function Leaderboards({ seasons }: { seasons: string[] }) {
 
   useEffect(() => {
     setRows(null)
+    setError('')  // otherwise one transient failure blanks the page until reload
     api.leaderboard(stat.key, season).then(setRows).catch((e) => setError(e.message))
   }, [stat, season])
 

@@ -2,6 +2,40 @@ import { useEffect, useState } from 'react'
 import { api, type Prediction, type TeamSeason } from '../lib/api'
 import { Card, ErrorNote, Loading, StatTile } from '../components/ui'
 
+const MODEL_LABELS: Record<string, string> = {
+  logistic_regression: 'Logistic regression',
+  hist_gradient_boosting: 'Gradient boosting',
+}
+
+// Declared at module scope on purpose: defined inside Predict it would be a new
+// component type on every render, remounting both selects and dropping focus.
+function TeamPicker({
+  label,
+  value,
+  teams,
+  onChange,
+}: {
+  label: string
+  value: number | null
+  teams: TeamSeason[]
+  onChange: (id: number) => void
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-xs text-[var(--text-muted)]">
+      {label}
+      <select
+        className="card cursor-pointer px-3 py-1.5 text-sm text-[var(--text-primary)]"
+        value={value ?? ''}
+        onChange={(e) => onChange(Number(e.target.value))}
+      >
+        {teams.map((t) => (
+          <option key={t.team_id} value={t.team_id}>{t.team_name}</option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
 export default function Predict({ seasons }: { seasons: string[] }) {
   const [teams, setTeams] = useState<TeamSeason[]>([])
   const [homeId, setHomeId] = useState<number | null>(null)
@@ -36,35 +70,26 @@ export default function Predict({ seasons }: { seasons: string[] }) {
 
   const pct = prediction ? Math.round(prediction.home_win_probability * 1000) / 10 : null
 
-  function TeamPicker({ label, value, onChange }: { label: string; value: number | null; onChange: (id: number) => void }) {
-    return (
-      <label className="flex flex-col gap-1 text-xs text-[var(--text-muted)]">
-        {label}
-        <select
-          className="card cursor-pointer px-3 py-1.5 text-sm text-[var(--text-primary)]"
-          value={value ?? ''}
-          onChange={(e) => onChange(Number(e.target.value))}
-        >
-          {teams.map((t) => (
-            <option key={t.team_id} value={t.team_id}>{t.team_name}</option>
-          ))}
-        </select>
-      </label>
-    )
-  }
-
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Game predictor</h1>
       <p className="max-w-xl text-sm text-[var(--text-secondary)]">
         Pregame win probability from each team's current form (last-10 record and margin,
-        season record, rest). Logistic regression, AUC 0.74 on a held-out season.
+        season record, rest).
+        {prediction && (
+          <>
+            {' '}
+            {MODEL_LABELS[prediction.model] ?? prediction.model}, AUC{' '}
+            {prediction.model_auc.toFixed(2)} on {prediction.model_test_season}, a season
+            held out of training.
+          </>
+        )}
       </p>
 
       <div className="flex flex-wrap items-end gap-3">
-        <TeamPicker label="Home team" value={homeId} onChange={setHomeId} />
+        <TeamPicker label="Home team" value={homeId} teams={teams} onChange={setHomeId} />
         <span className="pb-2 text-sm text-[var(--text-muted)]">vs</span>
-        <TeamPicker label="Away team" value={awayId} onChange={setAwayId} />
+        <TeamPicker label="Away team" value={awayId} teams={teams} onChange={setAwayId} />
       </div>
 
       {homeId === awayId && homeId != null && (

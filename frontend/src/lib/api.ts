@@ -75,6 +75,8 @@ export interface Prediction {
   away: TeamForm
   home_win_probability: number
   model: string
+  model_auc: number
+  model_test_season: string
   as_of_season: string
 }
 

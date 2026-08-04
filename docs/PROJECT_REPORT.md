@@ -816,3 +816,187 @@ restores the directory. The full ~580-name flat list was rejected as a wall of t
 letter grouping plus columns keeps it scannable. Directory data loads once per
 season and is sorted client-side with `localeCompare` (DuckDB's default collation
 would sort accented names after Z).
+
+---
+
+## Project Audit II — full-repository correctness review (August 4, 2026)
+
+### Non-technical summary
+
+Every file in the project was read line by line and checked by actually running it,
+rather than by reading alone. The review found 18 issues. Two of them were serious:
+**the app did not start at all**, and **the AI features could not work inside Docker**,
+which is the way the user guide tells people to run it.
+
+The first was the more embarrassing one, and it was self-inflicted the day before. The
+previous piece of work added a settings file, `.env`, and told users to create theirs by
+copying the example. The example lists every available setting with a blank value, which
+is the normal way to document settings. But blank turned out not to mean "not set" to
+the code: it meant "the location of the database is *nothing*", and "nothing" was
+interpreted as the project folder itself. The app then tried to open an entire folder as
+if it were a single database file and gave up. Following the documented setup
+instructions was enough to break the product, and 25 of the 27 automated tests were
+failing as a result.
+
+The second: the packaged Docker version never installed the software needed to talk to
+the AI providers. Anyone who followed the guide, pasted in an AI key, and restarted
+would get a generic server error rather than either an answer or a clear explanation.
+
+Two further problems were quieter but more serious in the long run. The database loader
+matched columns by position rather than by name, so if the NBA ever reordered the columns
+in its data feed, every value would have been filed under the wrong heading with no error
+and no warning. And the "Ask" feature, which lets an AI write database queries on your
+behalf, could be talked into reading files from the computer it runs on and printing them
+into the answer panel. Both are now closed.
+
+The remaining fourteen were smaller: a matchup screen that would happily predict a team
+playing against itself, error messages that told users their player had no comparable
+players when in fact the server had failed, a page that stayed blank forever after a
+single hiccup, a leftover template file from the project's first day, and several places
+where the documentation described something the code did not do.
+
+### Findings and fixes (technical)
+
+Reproduced before fixing and re-verified after. Baseline on entry: `pytest -q` reported
+`1 failed, 1 passed, 25 errors`.
+
+**Tier 1: the app did not run.**
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | `config.py` used `os.environ.get(name, default)`, which only falls back when a key is **absent**. `.env` (copied from `.env.example`) sets `COURTVISION_DB=`, so `DB_PATH` became `Path("")` = `Path(".")`. DuckDB then failed with `IO Error: ... Is a directory`. | New `_env_path()` helper treats blank/whitespace as unset. |
+| 2 | `Dockerfile` ran `pip install .` without the `[llm]` extra, while `docker-compose.yml` forwards LLM keys and `USER_GUIDE.md` documents configuring one. With a key set, the adapter's lazy `import anthropic` raised inside the request handler: **HTTP 500**. | Image installs `".[llm]"`; `create_client()` converts `ImportError` into a typed `LLMSDKMissingError` that the API renders as a **503** naming the missing package. |
+
+Finding 1 had a second-order effect worth recording. `Path(".")` *exists*, so the
+`skipif(not DB_PATH.exists())` guard on all four test modules did not skip, and
+`conftest.py` concluded a real warehouse was present and never built the synthetic
+fallback. A configuration error that should have produced 25 clean skips produced 25
+errors instead. **A guard written as "does this path exist" silently became "is this
+anything at all"** — the reason the fix belongs in `config.py`, not in `.env.example`.
+
+**Tier 2: silent corruption and data exfiltration.**
+
+| # | Finding | Fix |
+|---|---|---|
+| 3 | `upsert_seasons` did `INSERT INTO t SELECT * FROM _incoming` against a schema frozen on the first ingest. Demonstrated on a scratch database: a column-reordered frame stored `A=9, B=8` when the input was `A=8, B=9`, **with no error**. | `INSERT INTO t BY NAME SELECT * ...`. A genuinely new column now fails loudly, naming the column. |
+| 4 | `safe_execute` only checked that a statement begins with `SELECT`/`WITH`. Read-only protects the *database*, not the *host*: `SELECT * FROM read_csv_auto('/etc/hosts')` returned the file's contents, which `/ask` hands to the browser in `steps[].rows` and `Ask.tsx` renders verbatim. The question box is untrusted input. | `get_connection(allow_external=False)` sets DuckDB's `enable_external_access=false`; `api/deps.db` uses it for every request. |
+
+Finding 4 was fixed at the engine rather than by pattern-matching the SQL. A denylist of
+`read_csv`/`read_parquet`/`read_text`/`glob`/`ATTACH` has to stay exhaustive against a
+large and growing function surface, and every miss is a silent hole; `enable_external_access`
+is one switch that covers filesystem and network in both directions. Verified end to end
+by driving the real agent loop with a scripted hostile model: `steps` came back empty and
+the model received `Permission Error: ... file system operations are disabled by
+configuration` to retry against.
+
+This produced one constraint worth knowing: **DuckDB refuses two concurrent connections
+to the same file with different configurations in one process.** The API is unaffected
+(the lifespan's write connection closes before any request opens), but `tests/test_ml.py`'s
+read-only handle had to adopt the same config as the request dependency, as `test_ai.py`
+already did for its own reasons.
+
+**Tier 3: correctness and behavior.**
+
+- `/predict/game` accepted `home_team_id == away_team_id` and returned `0.593` for a
+  team playing itself. Now a 400. The frontend already guarded it, so only the API was exposed.
+- `train()` on a single-season warehouse produced an opaque sklearn error from an empty
+  training split; a single-class test season made `roc_auc_score` raise. Both now raise
+  `ValueError` naming the problem and the remedy, as does an unknown `test_season`.
+- `safe_execute` rejected any `;`, including inside a string literal, so
+  `WHERE team = 'A;B'` was refused. String literals are now blanked before the check.
+- `Predict.tsx` hardcoded "Logistic regression, AUC 0.74". Both are runtime facts that
+  drift the moment the model is retrained: `/predict/game` now returns `model_auc` and
+  `model_test_season` alongside the existing `model`, and the page renders them.
+- `TeamPicker` was declared *inside* `Predict`, making it a new component type on every
+  render, so both `<select>` elements remounted and dropped focus on each change. Hoisted
+  to module scope.
+- `Players.tsx` did `.catch(() => setSimilar([]))`, and an empty list renders "No qualified
+  profile (needs 20+ games, 15+ min/game)". A server error therefore displayed a confident,
+  false statement about the player. Failure now has its own state and renders `ErrorNote`.
+- `Leaderboards.tsx` and `League.tsx` set `error` but never cleared it, so one transient
+  failure blanked the page until reload. Both clear on each fetch.
+- The search debounce had no cleanup on unmount.
+
+**Tier 4: documentation and hygiene.**
+
+- README claimed the pipeline "collects real NBA statistics **every day**". Nothing
+  schedules `ingest.py`; this report's own Milestone 1 explicitly defers orchestration.
+  Now "on demand", and "automated data pipeline" is now "scripted".
+- `DEFAULT_SEASONS` listed three seasons while the README, `data/README.md`,
+  `USER_GUIDE.md` and the Ask page all said four, and the working warehouse held four.
+  A fresh ingest therefore contradicted every document describing it. `2022-23` added,
+  which is also the prior season the roster-carryover feature needs.
+- README's dashboard page list omitted **Ask** entirely.
+- `USER_GUIDE.md` opened by telling every reader to `cd` into the author's absolute
+  path, in a guide addressed to non-technical users on their own machines. Replaced with
+  drag-the-folder-onto-Terminal plus a way to confirm they landed in the right place. Its
+  setup step also installed without the `[llm]` extra its own AI section requires.
+- Deleted `frontend/src/App 2.tsx`, a tracked Vite scaffold leftover importing three
+  files that do not exist. It passed type-checking only because `vite/client`'s wildcard
+  `declare module '*.png'` ambient types masked the missing imports, and `vite build`
+  never bundled it because nothing imported it.
+- CI hardcoded `ghcr.io/sowriskumar/...`, so the docker job could not work on a fork;
+  now derived from `GITHUB_REPOSITORY_OWNER`, lowercased. The frontend job built but
+  never linted, though `oxlint` was already a devDependency; `npm run lint` added.
+- A comment above `LEADERBOARD_STATS` described a "minimum-minutes filter"; the parameter
+  is `min_gp`, a games filter. Rewritten to say what the whitelist is actually for, which
+  is keeping the interpolated `ORDER BY` injection-free.
+
+### Verification
+
+`33 passed` (27 before, plus 6 new regression tests), `ruff check` clean, `npm run lint`
+and `npm run build` clean. Live API confirmed by hand: `/health` reports four seasons,
+a same-team matchup returns 400, a valid one returns `model_auc: 0.7362` and
+`model_test_season: 2025-26` matching `win_probability.json`, and the `/ask` filesystem
+probe is refused with empty `steps`.
+
+**Docker verification (completed separately, after the audit).** The audit could not build
+the image, so the Dockerfile change and the "the Docker image already bundles all three"
+claim below were unverified when written. Both have since been confirmed on a running
+daemon:
+
+- The API image builds, and `python -c "import google.genai, anthropic, openai"` succeeds
+  **inside** it, so the `[llm]` extra genuinely landed.
+- Booted with `COURTVISION_DEMO=1` and no key: `/health` serves, `POST /ask` returns
+  **503** with the actionable message (the pre-audit behavior was a 500 from a lazy
+  import), and a same-team `/predict/game` returns 400.
+- The web image builds and `docker compose config` still resolves the stack.
+
+The severity of the config finding was also reproduced directly rather than accepted:
+with a blank value, the old `os.environ.get(name, default)` yields `Path(".")`, and
+`Path(".").exists()` is `True`, which is precisely why the failure was silent instead of
+loud. The filesystem hole was likewise reproduced before and after: the probe query
+returned 8 rows of `/etc/hosts` on a plain read-only connection and raises
+`PermissionException` on the sandboxed handle the API actually serves, while ordinary
+warehouse queries on that same handle are unaffected.
+
+New tests, each pinned to the specific defect rather than to the surface it appeared on:
+
+| Test | Pins |
+|---|---|
+| `test_blank_path_env_falls_back_to_default` | Blank env var means unset (parametrized over `""` and `"   "`) |
+| `test_upsert_is_column_name_matched` | A reordered frame does not shift values between columns |
+| `test_sql_cannot_reach_the_filesystem` | `read_csv_auto` / `read_text` refused; ordinary queries unaffected |
+| `test_sql_guard` (extended) | A semicolon inside a string literal is data, not a separator |
+| `test_train_rejects_unknown_test_season`, `test_train_requires_two_seasons` | Readable failures instead of opaque sklearn errors |
+| `test_predict_endpoint` (extended) | A team cannot play itself |
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `IO Error: ... Is a directory` | An old `.env` predating this audit, on a build without the `_env_path` fix | Update, or delete the blank `COURTVISION_DB=` / `COURTVISION_MODELS=` lines |
+| Ingest fails with `Table "x" does not have a column with name "y"` | stats.nba.com added a column; the table schema was frozen at first ingest | Intended: `INSERT BY NAME` refuses rather than misfiling. Drop the table and re-ingest that season |
+| `Can't open a connection to same database file with a different configuration` | Two connections in one process disagree on `allow_external` | Match the API: `get_connection(read_only=True, allow_external=False)` |
+| `/ask` returns 503 naming a package | A key is set but its SDK is missing | `pip install -e ".[llm]"`; the Docker image already bundles all three |
+| A legitimate query is refused as a permission error | `enable_external_access=false` blocks reading external files by design | Load the file into the warehouse via `scripts/ingest.py` instead |
+
+### Alternatives considered
+
+| Decision | Chosen | Alternatives & why rejected |
+|---|---|---|
+| Where to handle blank env values | `_env_path()` in `config.py` | **Remove the blank keys from `.env.example`**: they are correct documentation, and it fixes only this file while leaving the trap for every future variable. **Validate at startup**: catches the API but not scripts, tests, or the notebook. |
+| SQL sandbox | `enable_external_access=false` on the connection | **Regex denylist of file functions**: must stay exhaustive against a growing surface, and each miss is silent. **Separate restricted DuckDB user**: DuckDB has no user model. |
+| Column-drift handling | `INSERT BY NAME`, fail loudly on a new column | **Auto-`ALTER TABLE` for new columns**: silently changes the schema under the views, and a *renamed* column would present as an add plus an all-null orphan. Failing tells the operator to re-ingest deliberately. |
+| Stale model claims in the UI | Ship metrics in the API response | **Read `win_probability.json` at build time**: the frontend builds separately from the model and would drift again. **Delete the claim**: honest but loses the calibration context a prediction needs. |
+| Missing LLM SDK | 503 with the package name | **Install all three SDKs as core dependencies**: forces three large packages on users who want no AI. **Let the `ImportError` 500**: the actual prior behavior, undebuggable from the UI. |

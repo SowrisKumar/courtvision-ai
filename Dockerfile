@@ -9,7 +9,9 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir .
+# The [llm] extra is required, not optional: docker-compose forwards LLM API
+# keys, so the provider SDKs must be present or /ask fails at import time.
+RUN pip install --no-cache-dir ".[llm]"
 
 COPY scripts ./scripts
 COPY tests/synth.py ./scripts/_synth.py

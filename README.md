@@ -5,7 +5,7 @@
 ## What is this?
 
 CourtVision AI is a basketball analytics website, built from scratch as a complete,
-working product. It collects real NBA statistics every day from the league's public
+working product. It collects real NBA statistics on demand from the league's public
 stats site, organizes them into a fast local database, and turns them into things a
 coach, analyst, or fan can actually use:
 
@@ -23,7 +23,7 @@ coach, analyst, or fan can actually use:
 It also includes an AI assistant: ask a question in plain English and it queries the
 database, then answers with the numbers it found and shows you the exact queries it ran.
 
-Under the hood it is a full modern data product: an automated data pipeline, an
+Under the hood it is a full modern data product: a scripted data pipeline, an
 analytics database, a machine learning layer, a web API, an interactive dashboard, and
 a containerized deployment, each built the way a real engineering team would build them,
 with automated tests running on every change. A companion notebook documents the
@@ -47,8 +47,9 @@ normalize them into clean per-game analytics tables, served by a FastAPI backend
 | `game_logs` | Team box score per game (2 rows per game) |
 
 Full table-by-table notes and an entity-relationship diagram: [`data/README.md`](data/README.md).
-Default seasons: 2023-24 through 2025-26 (see `src/courtvision/config.py`); 2022-23 is
-also ingested for prior-season features.
+Default seasons: 2022-23 through 2025-26 (`DEFAULT_SEASONS` in `src/courtvision/config.py`).
+The earliest season is what gives the next one a prior season for the roster-carryover
+feature, so ingesting fewer than two seasons cannot train the win-probability model.
 
 ## Setup
 
@@ -88,8 +89,9 @@ npm run dev        # http://localhost:5173 (needs the API running on :8000)
 ```
 
 Pages: **League** (efficiency scatter + standings) · **Players** (search, career
-trends, ML-similar players) · **Leaderboards** (any whitelisted stat) · **Predict**
-(win probability for any matchup).
+trends, ML-similar players, AI scouting report) · **Leaderboards** (any whitelisted
+stat) · **Predict** (win probability for any matchup) · **Ask** (natural-language
+questions, with the SQL it ran).
 
 ### API endpoints
 
@@ -102,8 +104,8 @@ trends, ML-similar players) · **Leaderboards** (any whitelisted stat) · **Pred
 | `GET /players/{player_id}` | Per-season stats: per-game, shooting efficiency, usage, ratings |
 | `GET /leaderboards/{stat}?season=&min_gp=` | Top players by any whitelisted stat (`pts_pg`, `ts_pct`, `pie`, …) |
 | `GET /players/{id}/similar?season=` | ML similarity engine: statistically closest players (z-scored profile, cosine) |
-| `GET /predict/game?home_team_id=&away_team_id=` | Pregame win probability from current team form (test AUC 0.74) |
-| `POST /ask` | Natural-language analytics: an LLM agent writes SQL, reads results, answers with sources |
+| `GET /predict/game?home_team_id=&away_team_id=` | Pregame win probability from current team form; response carries the model name and its held-out AUC |
+| `POST /ask` | Natural-language analytics: an LLM agent writes SQL, reads results, answers with sources. Runs on a read-only connection with DuckDB external access disabled |
 | `GET /players/{id}/scouting-report` | AI scouting report grounded strictly in warehouse data |
 
 ## Configuration: where to put your API keys
@@ -130,7 +132,10 @@ automatically, so one edit covers both local and container runs. A real shell
 `export` still overrides `.env` if you want a one-off change.
 
 With no key set, the AI endpoints return 503 and every other page works normally.
-Install the provider SDKs with `pip install -e ".[llm]"`.
+For local runs, install the provider SDKs with `pip install -e ".[llm]"`; if a key is
+set but its SDK is missing, the AI endpoints return 503 naming the missing package
+rather than failing with a 500. The Docker image bundles all three SDKs, so
+`docker compose` only needs the key.
 
 **Other things worth changing, and where:**
 
@@ -163,8 +168,9 @@ API container) and the raw API on :8000. LLM keys (`GEMINI_API_KEY`, ...) are pa
 through from your shell. No ingested data? `COURTVISION_DEMO=1 docker compose up`
 boots with a synthetic warehouse.
 
-CI builds both images on every push and publishes them to GHCR from `main`:
-`ghcr.io/sowriskumar/courtvision-api` and `ghcr.io/sowriskumar/courtvision-web`.
+CI builds both images on every push and publishes them to GHCR from `main`, under the
+repository owner's namespace: `ghcr.io/<owner>/courtvision-api` and
+`ghcr.io/<owner>/courtvision-web`.
 
 **Deploying to a server:** pull both images, run them with the same compose topology,
 and ship your locally-ingested `data/` directory to the server (rsync/scp) — the

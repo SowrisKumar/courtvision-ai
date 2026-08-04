@@ -2,7 +2,8 @@
 
 This folder holds `courtvision.duckdb`, the analytics database (not committed to git;
 rebuild it any time with `python scripts/ingest.py && python scripts/build_metrics.py`).
-Row counts below are for the current four ingested seasons, 2022-23 through 2025-26.
+Row counts below are for the four default seasons, 2022-23 through 2025-26
+(`DEFAULT_SEASONS` in `src/courtvision/config.py`).
 
 ## Two layers
 

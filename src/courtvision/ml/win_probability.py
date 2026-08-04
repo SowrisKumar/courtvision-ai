@@ -46,12 +46,27 @@ def train(
     Returns the evaluation metrics dict (also written next to the model).
     """
     df = build_dataset(con)
-    test_season = test_season or df["season"].max()
+    seasons = sorted(df["season"].unique())
+    if len(seasons) < 2:
+        raise ValueError(
+            "training needs at least 2 ingested seasons (one to train on, one held "
+            f"out to evaluate); the warehouse has {len(seasons)}: {seasons}. "
+            "Run scripts/ingest.py for more seasons."
+        )
+    test_season = test_season or seasons[-1]
+    if test_season not in seasons:
+        raise ValueError(f"test season {test_season!r} is not in the warehouse; have {seasons}")
+
     train_df = df[df["season"] != test_season]
     test_df = df[df["season"] == test_season]
 
     X_tr, y_tr = train_df[WIN_PROB_FEATURES], train_df["home_win"]
     X_te, y_te = test_df[WIN_PROB_FEATURES], test_df["home_win"]
+    if y_te.nunique() < 2:
+        raise ValueError(
+            f"test season {test_season} has only one outcome class; "
+            "AUC and log loss are undefined. Pick a different test season."
+        )
 
     candidates = {
         "logistic_regression": make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)),

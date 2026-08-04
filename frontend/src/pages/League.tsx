@@ -13,6 +13,7 @@ export default function League({ seasons }: { seasons: string[] }) {
 
   useEffect(() => {
     setTeams(null)
+    setError('')  // otherwise one transient failure blanks the page until reload
     api.teams(season).then(setTeams).catch((e) => setError(e.message))
   }, [season])
 

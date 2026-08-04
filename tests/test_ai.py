@@ -37,7 +37,8 @@ def con():
     build_views(writer)
     writer.close()
 
-    con = get_connection(read_only=True)
+    # Matches the API request dependency: read-only *and* filesystem-sandboxed.
+    con = get_connection(read_only=True, allow_external=False)
     yield con
     con.close()
 
@@ -77,6 +78,32 @@ def test_sql_guard(con):
                 "UPDATE teams SET id = 1"):
         with pytest.raises(SQLGuardError):
             safe_execute(con, bad)
+
+    # a semicolon inside a string literal is data, not a statement separator
+    rows, _ = safe_execute(con, "SELECT 'a;b' AS v")
+    assert rows[0]["v"] == "a;b"
+
+
+def test_sql_cannot_reach_the_filesystem(con):
+    """A SELECT is not harmless: DuckDB can read local files unless told not to.
+
+    The /ask question box is untrusted input and the resulting rows are shown to
+    the caller, so a prompt injection could otherwise exfiltrate host files.
+    """
+    import duckdb
+
+    from courtvision.ai.assistant import safe_execute
+
+    for bad in (
+        "SELECT * FROM read_csv_auto('/etc/hosts', header=false) LIMIT 1",
+        "SELECT * FROM read_text('/etc/hosts')",
+    ):
+        with pytest.raises(duckdb.Error, match="(?i)disabled|permission"):
+            safe_execute(con, bad)
+
+    # ... while ordinary warehouse queries are unaffected.
+    rows, _ = safe_execute(con, "SELECT count(*) AS n FROM v_team_season")
+    assert rows[0]["n"] > 0
 
 
 # ---------- agent loop ----------
